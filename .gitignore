@@ -1,0 +1,22 @@
+# Environnement virtuel Python — trop lourd, pas necessaire
+venv/
+
+# Photos d'insectes — trop lourdes pour GitHub (max 100MB par fichier)
+images/
+
+# Fichiers Python compiles
+__pycache__/
+*.pyc
+*.pyo
+
+# Base de donnees locale
+*.db
+
+# Fichiers systeme
+.DS_Store
+*.log
+
+# EDSDK — bibliotheque proprietaire Canon, ne pas publier
+EDSDKv*/
+*.so
+*.dll
