@@ -6,40 +6,58 @@
 #
 # gvfs est tue automatiquement depuis interface.py avant chaque connexion.
 # Plus besoin de lancer pkill manuellement.
+#
+# Mode SaveTo = Host : la photo est transferee directement vers le PC.
+# La carte SD n'est pas necessaire.
 
 import ctypes
 import os
 import time
+import threading
 
 CHEMIN_LIB = os.path.expanduser(
     "~/EDSDKv132010L/Linux/EDSDK/Library/x86_64/libEDSDK.so"
 )
 
-# ── Constantes EDSDK (EDSDK_API_Reference.pdf) ────────────────────────────────
+# ── Constantes EDSDK ──────────────────────────────────────────────────────────
 EDS_ERR_OK                             = 0x00000000
 kEdsCameraCommand_TakePicture          = 0x00000000
 kEdsFileCreateDisposition_CreateAlways = 0x00000002
 kEdsAccess_ReadWrite                   = 0x00000001
 kEdsObjectEvent_DirItemCreated         = 0x00000203
 kEdsPropID_SaveTo                      = 0x00000390
-kEdsSaveTo_Host                        = 0x00000002
+kEdsSaveTo_Host                        = 0x00000002   # transfert direct vers le PC
 
 # ── Variables globales ────────────────────────────────────────────────────────
-_edsdk   = None
-_camera  = None
+_edsdk        = None
+_camera       = None
+_callback_ref = None   # reference gardee pour eviter le garbage collector
 
-# Chemin de destination fourni par l'interface (mis a jour avant chaque capture)
+# Thread qui pompe en continu les evenements EDSDK
+_thread_events    = None
+_continuer_events = False
+
+# Chemin du fichier de destination pour le callback
 _chemin_destination = None
 
-# Callback de l'evenement "nouveau fichier cree" — stocke en global pour
-# empecher le garbage collector Python de le supprimer pendant l'execution
-_callback_ref = None
+
+def _boucle_events():
+    """
+    Pompe en continu la file d'evenements EDSDK.
+    Cette fonction tourne dans un thread separe pendant toute la duree
+    de la session. Sans ce thread, les callbacks EDSDK ne sont jamais
+    declenches et la photo n'est jamais recue.
+    """
+    global _continuer_events
+    while _continuer_events:
+        if _edsdk:
+            _edsdk.EdsGetEvent()
+        time.sleep(0.05)
 
 
 def charger_edsdk():
     global _edsdk
     chemin = os.path.expanduser(CHEMIN_LIB)
-
     if not os.path.exists(chemin):
         emplacements = [
             os.path.expanduser("~/EDSDKv132010L/Linux/EDSDK/Library/x86_64/libEDSDK.so"),
@@ -53,7 +71,6 @@ def charger_edsdk():
         else:
             print("EDSDK non trouve. Verifiez le chemin dans canon.py.")
             return False
-
     try:
         _edsdk = ctypes.CDLL(chemin)
         print(f"EDSDK charge depuis : {chemin}")
@@ -77,23 +94,20 @@ def initialiser_edsdk():
 
 def connecter_canon():
     """
-    Detecte le Canon EOS R7 et ouvre une session.
+    Detecte le Canon EOS R7, ouvre une session et demarre le thread
+    qui pompe les evenements EDSDK en arriere-plan.
     Retourne le handle camera si succes, None sinon.
-
-    Cette fonction est appelee depuis interface.py, qui a deja tue gvfs
-    avant de l'invoquer. Ne pas rappeler pkill ici.
     """
-    global _camera
+    global _camera, _thread_events, _continuer_events
 
     if _edsdk is None:
         if not initialiser_edsdk():
             return None
 
-    # Obtenir la liste des cameras
     camera_list = ctypes.c_void_p()
     err = _edsdk.EdsGetCameraList(ctypes.byref(camera_list))
     if err != EDS_ERR_OK:
-        print(f"Erreur liste cameras EDSDK : {hex(err)}")
+        print(f"Erreur liste cameras : {hex(err)}")
         return None
 
     count = ctypes.c_int()
@@ -118,25 +132,32 @@ def connecter_canon():
 
     _camera = camera
     print("Canon EOS R7 connecte via EDSDK.")
+
+    # Demarrer le thread qui pompe les evenements EDSDK
+    _continuer_events = True
+    _thread_events = threading.Thread(target=_boucle_events, daemon=True)
+    _thread_events.start()
+
     return camera
 
 
 def prendre_photo_canon(chemin_fichier):
     """
-    Declenche le Canon et recupere la photo sur l'ordinateur.
+    Declenche le Canon et recupere la photo directement sur le PC
+    sans utiliser la carte SD (mode SaveTo = Host).
 
     Fonctionnement :
-    1. On configure le Canon pour sauvegarder sur l'ordinateur (SaveTo = Host).
-    2. On enregistre un callback sur l'evenement DirItemCreated : ce callback
-       est appele par EDSDK des qu'une nouvelle photo est disponible.
+    1. On configure SaveTo = Host : le Canon envoie la photo via USB
+       au lieu de l'ecrire sur la carte SD.
+    2. On enregistre un callback sur l'evenement DirItemCreated.
+       Ce callback est appele automatiquement par le thread _boucle_events
+       des qu'une nouvelle photo est disponible.
     3. On declenche (TakePicture).
-    4. On attend jusqu'a 15 secondes que le callback soit appele.
-    5. Le callback telecharge le fichier directement dans chemin_fichier.
+    4. On attend jusqu'a 20 secondes que le callback soit appele et
+       que la photo soit sauvegardee dans chemin_fichier.
 
-    L'erreur 0x22 (EDS_ERR_FILE_NOT_FOUND) dans l'ancienne version venait
-    d'une navigation manuelle incorrecte dans l'arborescence de la carte
-    memoire. En utilisant le callback DirItemCreated, on recoit directement
-    le handle du fichier sans avoir a naviguer manuellement.
+    Sans la carte SD, l'appareil photo peut quand meme fonctionner car
+    SaveTo = Host indique au Canon de tout envoyer vers l'ordinateur.
     """
     global _chemin_destination, _callback_ref
 
@@ -147,55 +168,49 @@ def prendre_photo_canon(chemin_fichier):
     os.makedirs(os.path.dirname(chemin_fichier), exist_ok=True)
     _chemin_destination = chemin_fichier
 
-    # Indicateur de completion (liste mutable pour etre modifiable dans le callback)
+    # Indicateurs de progression
     photo_recue = [False]
     resultat    = [None]
 
-    # Type du callback EDSDK : EdsObjectEventHandler
-    # Signature : EdsError callback(EdsObjectEvent event, EdsBaseRef object, EdsVoid* context)
+    # Type du callback EDSDK (signature C)
     CALLBACK_TYPE = ctypes.CFUNCTYPE(
-        ctypes.c_uint,       # type de retour : EdsError
-        ctypes.c_uint,       # event
-        ctypes.c_void_p,     # object (le dir_item de la photo)
-        ctypes.c_void_p      # context
+        ctypes.c_uint,    # retour : EdsError
+        ctypes.c_uint,    # event
+        ctypes.c_void_p,  # object (handle du fichier)
+        ctypes.c_void_p   # context
     )
 
     def on_object_event(event, obj, context):
         """
-        Appele par EDSDK quand un evenement objet se produit.
-        On ne reagit qu'a DirItemCreated (nouvelle photo disponible).
+        Appele par EDSDK quand une nouvelle photo est disponible.
+        On telecharge le fichier vers chemin_fichier.
         """
         if event == kEdsObjectEvent_DirItemCreated:
             chemin = _chemin_destination
             stream = ctypes.c_void_p()
-            chemin_bytes = chemin.encode('utf-8')
-
-            err_stream = _edsdk.EdsCreateFileStream(
-                chemin_bytes,
+            err_s = _edsdk.EdsCreateFileStream(
+                chemin.encode("utf-8"),
                 kEdsFileCreateDisposition_CreateAlways,
                 kEdsAccess_ReadWrite,
                 ctypes.byref(stream)
             )
-
-            if err_stream == EDS_ERR_OK:
+            if err_s == EDS_ERR_OK:
                 _edsdk.EdsDownload(obj, ctypes.c_ulonglong(0), stream)
                 _edsdk.EdsDownloadComplete(obj)
                 _edsdk.EdsRelease(stream)
                 print(f"Canon : photo sauvegardee -> {chemin}")
                 resultat[0] = chemin
             else:
-                print(f"Canon : erreur creation stream : {hex(err_stream)}")
+                print(f"Canon : erreur creation stream : {hex(err_s)}")
                 _edsdk.EdsDownloadCancel(obj)
-
             _edsdk.EdsRelease(obj)
             photo_recue[0] = True
-
         return EDS_ERR_OK
 
-    # Garder une reference au callback (empeche Python de le supprimer)
+    # Garder la reference (empeche Python de supprimer le callback)
     _callback_ref = CALLBACK_TYPE(on_object_event)
 
-    # Enregistrer le callback aupres de l'EDSDK
+    # Enregistrer le callback
     _edsdk.EdsSetObjectEventHandler(
         _camera,
         kEdsObjectEvent_DirItemCreated,
@@ -203,7 +218,7 @@ def prendre_photo_canon(chemin_fichier):
         None
     )
 
-    # Configurer le Canon pour transferer directement vers l'ordinateur
+    # Mode SaveTo = Host : transfert direct vers le PC, sans carte SD
     save_to = ctypes.c_uint(kEdsSaveTo_Host)
     _edsdk.EdsSetPropertyData(
         _camera,
@@ -213,28 +228,29 @@ def prendre_photo_canon(chemin_fichier):
         ctypes.byref(save_to)
     )
 
-    # Declencher la photo
+    # Declencher
     err = _edsdk.EdsSendCommand(_camera, kEdsCameraCommand_TakePicture, 0)
     if err != EDS_ERR_OK:
         print(f"Erreur declenchement : {hex(err)}")
         return None
 
-    # Attendre que le callback soit appele (max 15 secondes)
+    # Attendre le callback (max 20 secondes)
+    # Le thread _boucle_events pompe EdsGetEvent() en continu,
+    # ce qui permet au callback d'etre appele sans bloquer ce thread.
     debut = time.time()
     while not photo_recue[0]:
-        # Pomper les evenements EDSDK (equivalent d'une boucle d'evenements)
-        _edsdk.EdsGetEvent()
         time.sleep(0.1)
-        if time.time() - debut > 15:
-            print("Canon : timeout — photo non recue apres 15 secondes.")
+        if time.time() - debut > 20:
+            print("Canon : timeout — aucune photo recue apres 20 secondes.")
             return None
 
     return resultat[0]
 
 
 def deconnecter_canon():
-    """Ferme la session et libere les ressources EDSDK."""
-    global _camera
+    """Arrete le thread evenements et ferme la session."""
+    global _camera, _continuer_events
+    _continuer_events = False
     if _camera is not None:
         _edsdk.EdsCloseSession(_camera)
         _edsdk.EdsRelease(_camera)
@@ -244,19 +260,15 @@ def deconnecter_canon():
     print("Canon deconnecte.")
 
 
-# Test direct (python3 acquisition/canon.py)
+# Test direct
 if __name__ == "__main__":
     import subprocess
     subprocess.run(["pkill", "-9", "-f", "gvfs-gphoto2"], capture_output=True)
     subprocess.run(["pkill", "-9", "-f", "gvfsd-gphoto2"], capture_output=True)
     time.sleep(2)
-
     cam = connecter_canon()
     if cam:
         os.makedirs("images/test", exist_ok=True)
-        resultat = prendre_photo_canon("images/test/canon_test.jpg")
-        if resultat:
-            print(f"Test reussi : {resultat}")
-        else:
-            print("Test echoue.")
+        res = prendre_photo_canon("images/test/canon_test.jpg")
+        print(f"Resultat : {res}")
         deconnecter_canon()

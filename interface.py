@@ -13,19 +13,12 @@ from text import TEXTES, GUIDE_FR, GUIDE_EN
 
 # ── Palette ───────────────────────────────────────────────────────────────────
 C_BG         = "#FFFFFF"
-C_BARRE      = "#5C1A3B"          # bordeaux fonce — couleur de reference
-
-# Bouton Canon  : meme teinte bordeaux, plus claire (transparence simulee avec blanc melange)
-C_CANON      = "#A06080"          # bordeaux pastel clair
-
-# Bouton Jeulin : bordeaux fonce avec bordure visible (on utilise relief="solid")
-C_JEULIN_BG  = "#FFFFFF"          # fond blanc
-C_JEULIN_FG  = "#5C1A3B"          # texte bordeaux
-C_JEULIN_BD  = "#5C1A3B"          # bordure bordeaux
-
-# Bouton Android : meme teinte bordeaux, plus claire
-C_ANDROID    = "#A06080"          # bordeaux pastel clair (identique Canon)
-
+C_BARRE      = "#5C1A3B"
+C_CANON      = "#A06080"
+C_JEULIN_BG  = "#FFFFFF"
+C_JEULIN_FG  = "#5C1A3B"
+C_ANDROID    = "#A06080"
+C_STACK_BG   = "#3A7D44"
 C_ROUGE      = "#C0394B"
 C_VERT       = "#5C9E6E"
 C_ORANGE     = "#D4860A"
@@ -33,6 +26,7 @@ C_GRIS_TEXTE = "#5A4060"
 C_FRAME_BG   = "#FFFFFF"
 C_LOG_BG     = "#2D1F3A"
 C_LOG_FG     = "#F0D8EC"
+C_GUIDE_BTN  = "#FDF4F4"
 # ──────────────────────────────────────────────────────────────────────────────
 
 
@@ -41,18 +35,17 @@ class InterfaceAcquisition:
     def __init__(self):
         self.fenetre = tk.Tk()
         self.fenetre.title("Acquisition d'insectes")
-        self.fenetre.geometry("1100x800")
+        self.fenetre.geometry("1150x830")
         self.fenetre.configure(bg=C_BG)
 
-        self.langue = "FR"
-
+        self.langue             = "FR"
         self.canon_disponible   = False
         self.android_disponible = False
         self.android_id         = None
         self.index_jeulin       = None
-
-        self.derniere_photo = None
-        self.photo_tk       = None
+        self.derniere_photo     = None
+        self.photo_tk           = None
+        self.chemins_session    = []
 
         self._construire_interface()
         threading.Thread(target=self._verifier_tous, daemon=True).start()
@@ -69,7 +62,7 @@ class InterfaceAcquisition:
         corps.pack(fill="both", expand=True, padx=10, pady=8)
         col_g = tk.Frame(corps, bg=C_BG)
         col_g.pack(side="left", fill="both", expand=True)
-        col_d = tk.Frame(corps, bg=C_BG, width=290)
+        col_d = tk.Frame(corps, bg=C_BG, width=310)
         col_d.pack(side="right", fill="y", padx=(10, 0))
         col_d.pack_propagate(False)
         self._construire_gauche(col_g)
@@ -79,23 +72,16 @@ class InterfaceAcquisition:
         barre = tk.Frame(self.fenetre, bg=C_BARRE, height=50)
         barre.pack(fill="x")
         barre.pack_propagate(False)
-
         self.lbl_titre = tk.Label(barre, text=self.t("titre"),
             font=("Arial", 13, "bold"), fg="white", bg=C_BARRE)
         self.lbl_titre.pack(side="left", padx=16, pady=12)
-
-        # Switch de langue : petit menu deroulant discret
-        self.var_langue = tk.StringVar(value="FR")
-        self.combo_langue = ttk.Combobox(barre,
-            textvariable=self.var_langue,
-            values=["FR", "EN"],
-            width=4, font=("Arial", 9),
-            state="readonly")
-        self.combo_langue.pack(side="right", padx=10, pady=14)
-        self.combo_langue.bind("<<ComboboxSelected>>", self._changer_langue)
-
+        self.btn_langue = tk.Button(barre, text=self.t("langue_btn"),
+            font=("Arial", 9), bg=C_GUIDE_BTN, fg="black",
+            activebackground="#E7E4E4", relief="flat", padx=8,
+            command=self._changer_langue)
+        self.btn_langue.pack(side="right", padx=6, pady=12)
         self.btn_guide = tk.Button(barre, text=self.t("guide_btn"),
-            font=("Arial", 10, "bold"), bg="#FDF4F4", fg="black",
+            font=("Arial", 10, "bold"), bg=C_GUIDE_BTN, fg="black",
             activebackground="#E7E4E4", relief="flat", padx=10,
             command=self._ouvrir_guide)
         self.btn_guide.pack(side="right", padx=6, pady=12)
@@ -112,19 +98,16 @@ class InterfaceAcquisition:
             font=("Arial", 11, "bold"), fg="#000000",
             bg=C_FRAME_BG, padx=10, pady=8)
         self.frame_params.pack(fill="x", pady=(0, 8))
-
         self.lbl_params_note = tk.Label(self.frame_params,
             text=self.t("params_note"),
-            bg=C_FRAME_BG, fg="#C0394B", font=("Arial", 9, "italic"))
+            bg=C_FRAME_BG, fg=C_ROUGE, font=("Arial", 9, "italic"))
         self.lbl_params_note.pack(anchor="w", pady=(0, 6))
-
         champs = [
             ("espece",        "champ_espece",        "Entry",    "scolyte1", None),
             ("individu",      "champ_individu",      "Combobox", "",         [str(i) for i in range(1, 21)]),
             ("grossissement", "champ_grossissement", "Combobox", "",         ["10x","20x","40x","63x","100x"]),
-            ("angle",         "champ_angle",         "Combobox", "",         ["Dorsal","Lateral","Anterior","Posterior","Detail"]),
+            ("angle",         "champ_angle",         "Combobox", "",         ["Dorsal","Side","Front","Back"]),
         ]
-
         self.labels_champs = {}
         for cle_trad, attr, type_w, defaut, options in champs:
             ligne = tk.Frame(self.frame_params, bg=C_FRAME_BG)
@@ -150,14 +133,12 @@ class InterfaceAcquisition:
             font=("Arial", 11), fg=C_GRIS_TEXTE,
             bg=C_FRAME_BG, padx=10, pady=6)
         self.frame_conn.pack(fill="x", pady=(0, 8))
-
         self.btn_actualiser = tk.Button(self.frame_conn,
             text=self.t("actualiser"),
             font=("Arial", 10), bg="#DDDADA", fg="black",
             activebackground="#CECECE", relief="flat", padx=8,
             command=self._lancer_verification)
         self.btn_actualiser.pack(anchor="w", pady=(0, 6))
-
         self.statuts = {}
         self.labels_appareils = {}
         for cle, cle_trad in [("Canon","canon_lbl"),("Jeulin","jeulin_lbl"),("Android","android_lbl")]:
@@ -179,46 +160,34 @@ class InterfaceAcquisition:
             font=("Arial", 11, "bold"), fg=C_GRIS_TEXTE,
             bg=C_FRAME_BG, padx=10, pady=10)
         self.frame_declench.pack(fill="x", pady=(0, 8))
-
         self.lbl_declench_note = tk.Label(self.frame_declench,
             text=self.t("declencher_note"),
             bg=C_FRAME_BG, fg="#888", font=("Arial", 9, "italic"))
         self.lbl_declench_note.pack(anchor="w", pady=(0, 8))
-
         ligne_btns = tk.Frame(self.frame_declench, bg=C_FRAME_BG)
         ligne_btns.pack(fill="x")
         ligne_btns.columnconfigure(0, weight=1)
         ligne_btns.columnconfigure(1, weight=1)
         ligne_btns.columnconfigure(2, weight=1)
-
-        # Canon — bordeaux clair, texte blanc
         self.btn_canon = tk.Button(ligne_btns,
             text=self.t("btn_canon"),
-            bg=C_CANON, fg="white",
-            activebackground=C_BARRE,
+            bg=C_CANON, fg="white", activebackground=C_BARRE,
             font=("Arial", 11, "bold"), relief="flat", height=2, cursor="hand2",
             command=lambda: self._declencher_un("Canon"))
         self.btn_canon.grid(row=0, column=0, padx=6, sticky="ew")
-
-        # Jeulin — fond blanc, bordure et texte bordeaux fonce
         self.btn_jeulin = tk.Button(ligne_btns,
             text=self.t("btn_jeulin"),
-            bg=C_JEULIN_BG, fg=C_JEULIN_FG,
-            activebackground="#F0E0EC",
-            highlightbackground=C_JEULIN_BD, highlightthickness=2,
+            bg=C_JEULIN_BG, fg=C_JEULIN_FG, activebackground="#F0E0EC",
+            highlightbackground=C_BARRE, highlightthickness=2,
             font=("Arial", 11, "bold"), relief="solid", bd=2, height=2, cursor="hand2",
             command=lambda: self._declencher_un("Jeulin"))
         self.btn_jeulin.grid(row=0, column=1, padx=6, sticky="ew")
-
-        # Android — bordeaux clair, texte blanc (identique Canon)
         self.btn_android = tk.Button(ligne_btns,
             text=self.t("btn_android"),
-            bg=C_ANDROID, fg="white",
-            activebackground=C_BARRE,
+            bg=C_ANDROID, fg="white", activebackground=C_BARRE,
             font=("Arial", 11, "bold"), relief="flat", height=2, cursor="hand2",
             command=lambda: self._declencher_un("Android"))
         self.btn_android.grid(row=0, column=2, padx=6, sticky="ew")
-
         self.lbl_erreur_champs = tk.Label(self.frame_declench,
             text="", fg=C_ROUGE, bg=C_FRAME_BG, font=("Arial", 9, "italic"))
         self.lbl_erreur_champs.pack(anchor="w", pady=(6, 0))
@@ -229,7 +198,6 @@ class InterfaceAcquisition:
             font=("Arial", 11), fg=C_GRIS_TEXTE,
             bg=C_FRAME_BG, padx=5, pady=5)
         self.frame_journal.pack(fill="both", expand=True)
-
         self.zone_log = tk.Text(self.frame_journal,
             height=9, font=("Courier", 10), state="disabled",
             bg=C_LOG_BG, fg=C_LOG_FG, insertbackground="white", relief="flat")
@@ -237,13 +205,11 @@ class InterfaceAcquisition:
         self.zone_log.configure(yscrollcommand=sc.set)
         self.zone_log.pack(side="left", fill="both", expand=True)
         sc.pack(side="right", fill="y")
-
         self.btn_effacer = tk.Button(parent,
             text=self.t("effacer"),
             font=("Arial", 9), bg="#E7D4D6", fg="black",
             relief="flat", padx=6, command=self._effacer_journal)
         self.btn_effacer.pack(anchor="e", pady=(4, 0))
-
         self.log(self.t("demarrage"))
 
     def _construire_droite(self, parent):
@@ -253,10 +219,9 @@ class InterfaceAcquisition:
         self.lbl_photo_titre.pack(pady=(0, 4))
 
         self.frame_apercu = tk.Frame(parent,
-            bg="#E4E4E4", width=270, height=210, relief="groove", bd=2)
+            bg="#E4E4E4", width=300, height=215, relief="groove", bd=2)
         self.frame_apercu.pack(fill="x")
         self.frame_apercu.pack_propagate(False)
-
         self.label_apercu = tk.Label(self.frame_apercu,
             text="Aucune photo\nprise pour l'instant",
             bg="#E4E4E4", fg="#7A5070",
@@ -271,7 +236,7 @@ class InterfaceAcquisition:
 
         self.label_nom_photo = tk.Label(parent, text="",
             bg=C_BG, fg=C_GRIS_TEXTE,
-            font=("Courier", 8), wraplength=270, justify="left")
+            font=("Courier", 8), wraplength=300, justify="left")
         self.label_nom_photo.pack(pady=4, anchor="w")
 
         self.btn_supprimer = tk.Button(parent,
@@ -281,29 +246,51 @@ class InterfaceAcquisition:
             command=self._supprimer_derniere_photo)
         self.btn_supprimer.pack(fill="x", pady=2)
 
+        # ── Separateur ────────────────────────────────────────────────────────
+        tk.Frame(parent, bg="#CCCCCC", height=1).pack(fill="x", pady=(12, 6))
+
         self.lbl_session = tk.Label(parent,
             text=self.t("session_titre"),
             font=("Arial", 10, "bold"), fg=C_GRIS_TEXTE, bg=C_BG)
-        self.lbl_session.pack(pady=(14, 2), anchor="w")
+        self.lbl_session.pack(anchor="w")
+
+        # Note d'instruction : wraplength large pour ne pas couper le texte
+        self.lbl_session_note = tk.Label(parent,
+            text=self.t("session_note"),
+            bg=C_BG, fg="#666666",
+            font=("Arial", 9), wraplength=290, justify="left")
+        self.lbl_session_note.pack(anchor="w", pady=(2, 6))
 
         frame_liste = tk.Frame(parent, bg=C_BG)
         frame_liste.pack(fill="both", expand=True)
-
         self.liste_photos = tk.Listbox(frame_liste,
-            font=("Courier", 8), height=14,
+            font=("Courier", 8), height=8,
             bg="white", fg=C_GRIS_TEXTE,
-            selectbackground="#E7D4D6", selectforeground="black",
-            relief="solid", bd=1, selectmode="single")
+            selectbackground="#D4A0B8", selectforeground="white",
+            relief="solid", bd=1, selectmode="extended")
         sc_liste = tk.Scrollbar(frame_liste, command=self.liste_photos.yview)
         self.liste_photos.configure(yscrollcommand=sc_liste.set)
         self.liste_photos.pack(side="left", fill="both", expand=True)
         sc_liste.pack(side="right", fill="y")
         self.liste_photos.bind("<<ListboxSelect>>", self._afficher_photo_selectionnee)
 
+        self.btn_stack = tk.Button(parent,
+            text=self.t("btn_stack"),
+            font=("Arial", 10, "bold"), bg=C_STACK_BG, fg="white",
+            relief="flat", cursor="hand2", pady=6,
+            command=self._lancer_stacking)
+        self.btn_stack.pack(fill="x", pady=(8, 0))
+
+        self.lbl_stack_statut = tk.Label(parent,
+            text="", bg=C_BG, fg=C_GRIS_TEXTE,
+            font=("Arial", 9, "italic"), wraplength=290)
+        self.lbl_stack_statut.pack(anchor="w", pady=(3, 0))
+
     # ── Langue ────────────────────────────────────────────────────────────────
 
-    def _changer_langue(self, event=None):
-        self.langue = self.var_langue.get()
+    def _changer_langue(self):
+        self.langue = "EN" if self.langue == "FR" else "FR"
+        self.btn_langue.configure(text=self.t("langue_btn"))
         self._mettre_a_jour_textes()
 
     def _mettre_a_jour_textes(self):
@@ -329,6 +316,8 @@ class InterfaceAcquisition:
         self.lbl_indication.configure(text=self.t("cliquer_agrandir"))
         self.btn_supprimer.configure(text=self.t("supprimer"))
         self.lbl_session.configure(text=self.t("session_titre"))
+        self.lbl_session_note.configure(text=self.t("session_note"))
+        self.btn_stack.configure(text=self.t("btn_stack"))
 
     # ── Journal ───────────────────────────────────────────────────────────────
 
@@ -362,12 +351,6 @@ class InterfaceAcquisition:
         self.fenetre.after(0, lambda: self.log(msg))
 
     def _verifier_canon(self):
-        """
-        Libere gvfs avant de tenter la connexion EDSDK.
-        gvfs est un processus Ubuntu qui prend automatiquement le controle
-        de tout appareil photo USB branche, ce qui empeche EDSDK d'y acceder.
-        pkill le force a liberer l'appareil.
-        """
         subprocess.run(["pkill", "-9", "-f", "gvfs-gphoto2"], capture_output=True)
         subprocess.run(["pkill", "-9", "-f", "gvfsd-gphoto2"], capture_output=True)
         time.sleep(1.5)
@@ -391,30 +374,19 @@ class InterfaceAcquisition:
             self.fenetre.after(0, lambda err=e: self.log(f"{self.t('canon_err')} : {err}"))
 
     def _verifier_jeulin(self):
-        """
-        Identifie la Jeulin par son nom de peripherique plutot que par son index.
-        On lit /proc/bus/usb/devices ou on utilise v4l2 pour trouver la camera
-        dont le nom contient "Jeulin" ou "e-Mago".
-        Si on ne trouve pas par nom, on prend le premier index > 0 disponible
-        (l'index 0 est toujours la webcam integree du laptop).
-        """
         try:
             import cv2
-
-            # Methode 1 : chercher par nom via v4l2
             index_trouve = None
             try:
-                r = subprocess.run(
-                    ["v4l2-ctl", "--list-devices"],
-                    capture_output=True, text=True, timeout=5
-                )
+                r = subprocess.run(["v4l2-ctl", "--list-devices"],
+                    capture_output=True, text=True, timeout=5)
                 lignes = r.stdout.split("\n")
                 nom_courant = ""
                 for ligne in lignes:
                     if ligne and not ligne.startswith("\t"):
                         nom_courant = ligne.lower()
-                    elif ligne.startswith("\t") and ("jeulin" in nom_courant or "e-mago" in nom_courant):
-                        # Extraire le numero de /dev/video0, /dev/video1...
+                    elif ligne.startswith("\t") and (
+                            "jeulin" in nom_courant or "e-mago" in nom_courant):
                         chemin = ligne.strip()
                         if "video" in chemin:
                             try:
@@ -424,9 +396,7 @@ class InterfaceAcquisition:
                             except ValueError:
                                 pass
             except Exception:
-                pass  # v4l2-ctl pas installe, on passe a la methode 2
-
-            # Methode 2 : premier index > 0 si la methode 1 n'a rien trouve
+                pass
             if index_trouve is None:
                 for i in range(1, 6):
                     cap = cv2.VideoCapture(i)
@@ -435,7 +405,6 @@ class InterfaceAcquisition:
                         index_trouve = i
                         break
                     cap.release()
-
             if index_trouve is not None:
                 self.index_jeulin = index_trouve
                 self.fenetre.after(0, lambda idx=index_trouve: self.statuts["Jeulin"].configure(
@@ -469,7 +438,8 @@ class InterfaceAcquisition:
                 self.android_id = appareils[0]
                 self.fenetre.after(0, lambda: self.statuts["Android"].configure(
                     text=f"{self.t('connecte_android')} ({self.android_id})", fg=C_VERT))
-                self.fenetre.after(0, lambda: self.log(f"{self.t('android_ok')} : {self.android_id}"))
+                self.fenetre.after(0, lambda: self.log(
+                    f"{self.t('android_ok')} : {self.android_id}"))
             else:
                 self.android_disponible = False
                 self.fenetre.after(0, lambda: self.statuts["Android"].configure(
@@ -503,39 +473,27 @@ class InterfaceAcquisition:
             return
         boutons = {"Canon": self.btn_canon, "Jeulin": self.btn_jeulin, "Android": self.btn_android}
         boutons[appareil].configure(state="disabled")
-        threading.Thread(target=self._capture_un_appareil, args=(appareil,), daemon=True).start()
+        threading.Thread(
+            target=self._capture_un_appareil,
+            args=(appareil,), daemon=True
+        ).start()
 
     def _capture_un_appareil(self, appareil):
-        """
-        Capture une photo avec l'appareil indique.
-
-        Pourquoi specifier l'extension dans le code ?
-        cv2.imwrite() utilise l'extension du nom de fichier pour choisir
-        le format de compression. Ce n'est pas l'appareil qui decide :
-        OpenCV lit l'extension ".png" ou ".jpg" et encode en consequence.
-        Pour EDSDK (Canon), c'est pareil : on nomme le fichier de destination
-        et l'EDSDK y ecrit les octets bruts du JPEG produit par le capteur.
-        L'extension est donc necessaire dans le code.
-        """
         from acquisition.nommage import (
             generer_nom_fichier, generer_chemin_dossier, prochain_numero_photo
         )
-
         espece        = self.champ_espece.get().strip()
         num_individu  = int(self.champ_individu.get())
         grossissement = self.champ_grossissement.get()
         angle         = self.champ_angle.get()
+        extensions    = {"Canon": "jpg", "Jeulin": "png", "Android": "jpg"}
+        ext           = extensions[appareil]
+        dossier       = generer_chemin_dossier("images", appareil, espece, num_individu)
+        num_photo     = prochain_numero_photo(dossier, espece, num_individu, appareil, grossissement, angle, ext)
+        nom           = generer_nom_fichier(espece, num_individu, appareil, grossissement, angle, num_photo, ext)
+        chemin        = os.path.join(dossier, nom)
 
-        extensions = {"Canon": "jpg", "Jeulin": "png", "Android": "jpg"}
-        ext = extensions[appareil]
-
-        dossier = generer_chemin_dossier("images", appareil, espece, num_individu)
-        num_photo = prochain_numero_photo(dossier, espece, num_individu, appareil, grossissement, angle, ext)
-        nom_fichier = generer_nom_fichier(espece, num_individu, appareil, grossissement, angle, num_photo, ext)
-        chemin = os.path.join(dossier, nom_fichier)
-
-        self.fenetre.after(0, lambda: self.log(f"{self.t('declench_log')} {appareil} : {nom_fichier}"))
-
+        self.fenetre.after(0, lambda: self.log(f"{self.t('declench_log')} {appareil} : {nom}"))
         resultat = None
 
         if appareil == "Canon":
@@ -547,7 +505,6 @@ class InterfaceAcquisition:
                     self.fenetre.after(0, lambda err=e: self.log(f"{self.t('canon_err')} : {err}"))
             else:
                 self.fenetre.after(0, lambda: self.log(self.t("canon_decon")))
-
         elif appareil == "Jeulin":
             if self.index_jeulin is not None:
                 try:
@@ -557,7 +514,6 @@ class InterfaceAcquisition:
                     self.fenetre.after(0, lambda err=e: self.log(f"{self.t('jeulin_err')} : {err}"))
             else:
                 self.fenetre.after(0, lambda: self.log(self.t("jeulin_decon")))
-
         elif appareil == "Android":
             if self.android_disponible and self.android_id:
                 try:
@@ -569,13 +525,67 @@ class InterfaceAcquisition:
                 self.fenetre.after(0, lambda: self.log(self.t("android_decon")))
 
         if resultat:
-            self.fenetre.after(0, lambda r=resultat: self.log(f"{self.t('photo_ok')} : {os.path.basename(r)}"))
+            self.fenetre.after(0, lambda r=resultat: self.log(
+                f"{self.t('photo_ok')} : {os.path.basename(r)}"))
             self.fenetre.after(0, lambda r=resultat: self._mettre_a_jour_apercu(r))
         else:
             self.fenetre.after(0, lambda: self.log(f"{self.t('photo_echec')} {appareil}."))
 
         boutons = {"Canon": self.btn_canon, "Jeulin": self.btn_jeulin, "Android": self.btn_android}
         self.fenetre.after(0, lambda: boutons[appareil].configure(state="normal"))
+
+    # ── Focus stacking ────────────────────────────────────────────────────────
+
+    def _lancer_stacking(self):
+        selection = self.liste_photos.curselection()
+        if len(selection) < 2:
+            self.log(self.t("stack_sel_insuffisante"))
+            self.lbl_stack_statut.configure(
+                text=self.t("stack_sel_insuffisante"), fg=C_ROUGE)
+            self.fenetre.after(4000, lambda: self.lbl_stack_statut.configure(text=""))
+            return
+        chemins = []
+        for idx in selection:
+            nom = self.liste_photos.get(idx)
+            for c in self.chemins_session:
+                if os.path.basename(c) == nom:
+                    chemins.append(c)
+                    break
+        if len(chemins) < 2:
+            self.log(self.t("stack_chemins_introuvables"))
+            return
+        premier = os.path.basename(chemins[0])
+        base = premier.rsplit("_photo", 1)[0] if "_photo" in premier else os.path.splitext(premier)[0]
+        nom_sortie    = f"{base}_STACKEE.tiff"
+        chemin_sortie = os.path.join(os.path.dirname(chemins[0]), nom_sortie)
+        self.log(f"{self.t('stack_debut')} {len(chemins)} {self.t('stack_images')} -> {nom_sortie}")
+        self.lbl_stack_statut.configure(text=self.t("stack_en_cours"), fg=C_ORANGE)
+        self.btn_stack.configure(state="disabled")
+        threading.Thread(
+            target=self._executer_stacking,
+            args=(chemins, chemin_sortie), daemon=True
+        ).start()
+
+    def _executer_stacking(self, chemins, chemin_sortie):
+        try:
+            from traitement.stacking import focus_stacking
+            resultat = focus_stacking(chemins, chemin_sortie)
+            if resultat:
+                self.fenetre.after(0, lambda: self.log(
+                    f"{self.t('stack_ok')} : {os.path.basename(resultat)}"))
+                self.fenetre.after(0, lambda: self.lbl_stack_statut.configure(
+                    text=self.t("stack_ok_court"), fg=C_VERT))
+                self.fenetre.after(0, lambda r=resultat: self._mettre_a_jour_apercu(r))
+            else:
+                self.fenetre.after(0, lambda: self.log(self.t("stack_echec")))
+                self.fenetre.after(0, lambda: self.lbl_stack_statut.configure(
+                    text=self.t("stack_echec"), fg=C_ROUGE))
+        except Exception as e:
+            self.fenetre.after(0, lambda err=e: self.log(f"Stacking erreur : {err}"))
+            self.fenetre.after(0, lambda: self.lbl_stack_statut.configure(
+                text=self.t("stack_echec"), fg=C_ROUGE))
+        self.fenetre.after(0, lambda: self.btn_stack.configure(state="normal"))
+        self.fenetre.after(5000, lambda: self.lbl_stack_statut.configure(text=""))
 
     # ── Apercu ────────────────────────────────────────────────────────────────
 
@@ -586,21 +596,33 @@ class InterfaceAcquisition:
         if os.path.exists(chemin_photo):
             try:
                 img = Image.open(chemin_photo)
-                img.thumbnail((270, 210), Image.LANCZOS)
+                img.thumbnail((300, 215), Image.LANCZOS)
                 self.photo_tk = ImageTk.PhotoImage(img)
-                self.label_apercu.configure(image=self.photo_tk, text="", bg="#E4E4E4", cursor="hand2")
+                self.label_apercu.configure(
+                    image=self.photo_tk, text="", bg="#E4E4E4", cursor="hand2")
             except Exception:
-                self.label_apercu.configure(image="", text="[apercu non disponible]", bg="#E4E4E4", cursor="arrow")
+                self.label_apercu.configure(
+                    image="", text="[apercu non disponible]",
+                    bg="#E4E4E4", cursor="arrow")
         else:
-            self.label_apercu.configure(image="", text=f"Fichier introuvable :\n{os.path.basename(chemin_photo)}", bg="#E4E4E4", cursor="arrow")
+            self.label_apercu.configure(
+                image="", text=f"Fichier introuvable :\n{os.path.basename(chemin_photo)}",
+                bg="#E4E4E4", cursor="arrow")
         if ajouter_liste:
-            self.liste_photos.insert(0, os.path.basename(chemin_photo))
+            nom = os.path.basename(chemin_photo)
+            self.liste_photos.insert(0, nom)
+            self.chemins_session.insert(0, chemin_photo)
 
     def _afficher_photo_selectionnee(self, event):
         selection = self.liste_photos.curselection()
         if not selection:
             return
-        nom = self.liste_photos.get(selection[0])
+        idx = selection[-1]
+        nom = self.liste_photos.get(idx)
+        for c in self.chemins_session:
+            if os.path.basename(c) == nom:
+                self._mettre_a_jour_apercu(c, ajouter_liste=False)
+                return
         for racine, _, fichiers in os.walk("images"):
             if nom in fichiers:
                 self._mettre_a_jour_apercu(os.path.join(racine, nom), ajouter_liste=False)
@@ -630,7 +652,9 @@ class InterfaceAcquisition:
         if not self.derniere_photo:
             return
         nom = os.path.basename(self.derniere_photo)
-        if not messagebox.askyesno(self.t("confirmer_titre"), f"{self.t('confirmer_msg')}\n\n{nom}"):
+        if not messagebox.askyesno(
+                self.t("confirmer_titre"),
+                f"{self.t('confirmer_msg')}\n\n{nom}"):
             return
         try:
             if os.path.exists(self.derniere_photo):
@@ -640,6 +664,9 @@ class InterfaceAcquisition:
                 if self.liste_photos.get(i) == nom:
                     self.liste_photos.delete(i)
                     break
+            self.chemins_session = [
+                c for c in self.chemins_session if os.path.basename(c) != nom
+            ]
             self.derniere_photo = None
             self.label_apercu.configure(image="", text="Photo supprimee.", bg="#E4E4E4")
             self.label_nom_photo.configure(text="")
@@ -647,12 +674,10 @@ class InterfaceAcquisition:
         except Exception as e:
             messagebox.showerror(self.t("suppr_err"), f"{self.t('suppr_err')} :\n{e}")
 
-    # ── Guide ─────────────────────────────────────────────────────────────────
-
     def _ouvrir_guide(self):
         g = tk.Toplevel(self.fenetre)
         g.title(self.t("guide_titre"))
-        g.geometry("720x620")
+        g.geometry("720x640")
         g.configure(bg=C_BG)
         g.resizable(True, True)
         tk.Label(g, text=self.t("guide_titre"),
@@ -661,7 +686,8 @@ class InterfaceAcquisition:
         frame_texte.pack(fill="both", expand=True, padx=12, pady=(0, 4))
         texte = tk.Text(frame_texte,
             font=("Arial", 10), bg="white", fg="#1A1A1A",
-            wrap="word", padx=14, pady=10, relief="flat", spacing1=2, spacing3=4)
+            wrap="word", padx=14, pady=10, relief="flat",
+            spacing1=2, spacing3=4)
         sc = tk.Scrollbar(frame_texte, command=texte.yview)
         texte.configure(yscrollcommand=sc.set)
         texte.pack(side="left", fill="both", expand=True)
