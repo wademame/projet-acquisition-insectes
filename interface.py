@@ -1,9 +1,10 @@
 # interface.py
-# Lancement : python3 interface.py  (depuis la racine du projet)
+# Lancement : python3 interface.py
 
 import tkinter as tk
 from tkinter import ttk, messagebox
 import threading
+import sys
 import os
 import time
 import datetime
@@ -11,7 +12,9 @@ import subprocess
 from PIL import Image, ImageTk
 from text import TEXTES, GUIDE_FR, GUIDE_EN
 
-# ── Palette ───────────────────────────────────────────────────────────────────
+WINDOWS = sys.platform == "win32"
+LINUX   = sys.platform.startswith("linux")
+
 C_BG         = "#FFFFFF"
 C_BARRE      = "#5C1A3B"
 C_CANON      = "#A06080"
@@ -27,7 +30,6 @@ C_FRAME_BG   = "#FFFFFF"
 C_LOG_BG     = "#2D1F3A"
 C_LOG_FG     = "#F0D8EC"
 C_GUIDE_BTN  = "#FDF4F4"
-# ──────────────────────────────────────────────────────────────────────────────
 
 
 class InterfaceAcquisition:
@@ -321,7 +323,7 @@ class InterfaceAcquisition:
         self.zone_log.delete("1.0", "end")
         self.zone_log.configure(state="disabled")
 
-    # ── Verification des appareils ────────────────────────────────────────────
+    # ── Vérification ──────────────────────────────────────────────────────────
 
     def _lancer_verification(self):
         threading.Thread(target=self._verifier_tous, daemon=True).start()
@@ -340,18 +342,21 @@ class InterfaceAcquisition:
 
     def _verifier_canon(self):
         """
-        Verifie le Canon via gphoto2 --auto-detect.
-        connecter_canon() retourne True/False (plus de handle EDSDK).
-        gvfs est tue automatiquement dans connecter_canon().
+        Linux   : détecte via gphoto2 --auto-detect
+        Windows : détecte via digiCamControl (vérifie que l'exe existe)
+        Le statut affiché précise l'outil utilisé selon l'OS.
         """
         try:
             from acquisition.canon import connecter_canon
             ok = connecter_canon()
             if ok:
                 self.canon_disponible = True
-                self.fenetre.after(0, lambda: self.statuts["Canon"].configure(
-                    text="Connecte (gphoto2)", fg=C_VERT))
-                self.fenetre.after(0, lambda: self.log(self.t("canon_ok")))
+                # Statut différent selon l'OS
+                statut = self.t("canon_statut_linux") if LINUX else self.t("canon_statut_windows")
+                msg_log = self.t("canon_ok_linux") if LINUX else self.t("canon_ok_windows")
+                self.fenetre.after(0, lambda s=statut: self.statuts["Canon"].configure(
+                    text=s, fg=C_VERT))
+                self.fenetre.after(0, lambda m=msg_log: self.log(m))
             else:
                 self.canon_disponible = False
                 self.fenetre.after(0, lambda: self.statuts["Canon"].configure(
@@ -360,7 +365,7 @@ class InterfaceAcquisition:
         except Exception as e:
             self.canon_disponible = False
             self.fenetre.after(0, lambda: self.statuts["Canon"].configure(
-                text="Erreur", fg=C_ROUGE))
+                text=self.t("err_canon"), fg=C_ROUGE))
             self.fenetre.after(0, lambda err=e: self.log(f"{self.t('canon_err')} : {err}"))
 
     def _verifier_jeulin(self):
@@ -388,7 +393,8 @@ class InterfaceAcquisition:
             except Exception:
                 pass
             if index_trouve is None:
-                for i in range(1, 6):
+                debut = 1 if LINUX else 0
+                for i in range(debut, 6):
                     cap = cv2.VideoCapture(i)
                     if cap.isOpened():
                         cap.release()
@@ -398,7 +404,7 @@ class InterfaceAcquisition:
             if index_trouve is not None:
                 self.index_jeulin = index_trouve
                 self.fenetre.after(0, lambda idx=index_trouve: self.statuts["Jeulin"].configure(
-                    text=f"Connectee (index {idx})", fg=C_VERT))
+                    text=f"Connectée (index {idx})", fg=C_VERT))
                 self.fenetre.after(0, lambda idx=index_trouve: self.log(
                     f"{self.t('jeulin_ok')} {idx}."))
             else:
@@ -441,11 +447,11 @@ class InterfaceAcquisition:
                 text=self.t("adb_absent"), fg=C_ROUGE))
             self.fenetre.after(0, lambda: self.log(self.t("android_adb_abs")))
 
-    # ── Declenchement ─────────────────────────────────────────────────────────
+    # ── Déclenchement ─────────────────────────────────────────────────────────
 
     def _valider_champs(self):
         manquants = []
-        if not self.champ_espece.get().strip():        manquants.append("Espece")
+        if not self.champ_espece.get().strip():        manquants.append("Espèce")
         if not self.champ_individu.get().strip():      manquants.append("N° individu")
         if not self.champ_grossissement.get().strip(): manquants.append("Grossissement")
         if not self.champ_angle.get().strip():         manquants.append("Angle")
@@ -545,8 +551,8 @@ class InterfaceAcquisition:
         if len(chemins) < 2:
             self.log(self.t("stack_chemins_introuvables"))
             return
-        premier  = os.path.basename(chemins[0])
-        base     = premier.rsplit("_photo", 1)[0] if "_photo" in premier else os.path.splitext(premier)[0]
+        premier       = os.path.basename(chemins[0])
+        base          = premier.rsplit("_photo", 1)[0] if "_photo" in premier else os.path.splitext(premier)[0]
         nom_sortie    = f"{base}_STACKEE.tiff"
         chemin_sortie = os.path.join(os.path.dirname(chemins[0]), nom_sortie)
         self.log(f"{self.t('stack_debut')} {len(chemins)} {self.t('stack_images')} -> {nom_sortie}")
@@ -578,7 +584,7 @@ class InterfaceAcquisition:
         self.fenetre.after(0, lambda: self.btn_stack.configure(state="normal"))
         self.fenetre.after(5000, lambda: self.lbl_stack_statut.configure(text=""))
 
-    # ── Apercu ────────────────────────────────────────────────────────────────
+    # ── Aperçu ────────────────────────────────────────────────────────────────
 
     def _mettre_a_jour_apercu(self, chemin_photo, ajouter_liste=True):
         self.derniere_photo = chemin_photo
@@ -593,7 +599,7 @@ class InterfaceAcquisition:
                     image=self.photo_tk, text="", bg="#E4E4E4", cursor="hand2")
             except Exception:
                 self.label_apercu.configure(
-                    image="", text="[apercu non disponible]",
+                    image="", text="[aperçu non disponible]",
                     bg="#E4E4E4", cursor="arrow")
         else:
             self.label_apercu.configure(
@@ -659,7 +665,7 @@ class InterfaceAcquisition:
                 c for c in self.chemins_session if os.path.basename(c) != nom
             ]
             self.derniere_photo = None
-            self.label_apercu.configure(image="", text="Photo supprimee.", bg="#E4E4E4")
+            self.label_apercu.configure(image="", text="Photo supprimée.", bg="#E4E4E4")
             self.label_nom_photo.configure(text="")
             self.btn_supprimer.configure(state="disabled")
         except Exception as e:
