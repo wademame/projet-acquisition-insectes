@@ -1,0 +1,13 @@
+# requirements.txt
+# Bibliotheques Python du projet d'acquisition d'images d'insectes
+#
+# Installation (dans le venv active) :
+#   pip install -r requirements.txt
+#
+# Ces bibliotheques ne sont pas incluses dans Python par defaut.
+# Tout le reste (tkinter, os, time, threading, subprocess, ctypes,
+# datetime, sys) est integre a Python et ne necessite pas d'installation.
+
+# Traitement et affichage des images
+opencv-python==4.10.0.84
+pillow==10.4.0

@@ -217,7 +217,6 @@ class InterfaceAcquisition:
             text=self.t("photo_titre"),
             font=("Arial", 11, "bold"), fg=C_GRIS_TEXTE, bg=C_BG)
         self.lbl_photo_titre.pack(pady=(0, 4))
-
         self.frame_apercu = tk.Frame(parent,
             bg="#E4E4E4", width=300, height=215, relief="groove", bd=2)
         self.frame_apercu.pack(fill="x")
@@ -228,39 +227,30 @@ class InterfaceAcquisition:
             font=("Arial", 10, "italic"), cursor="hand2")
         self.label_apercu.pack(expand=True)
         self.label_apercu.bind("<Button-1>", self._agrandir_photo)
-
         self.lbl_indication = tk.Label(parent,
             text=self.t("cliquer_agrandir"),
             bg=C_BG, fg="#999", font=("Arial", 8, "italic"))
         self.lbl_indication.pack(pady=(2, 0))
-
         self.label_nom_photo = tk.Label(parent, text="",
             bg=C_BG, fg=C_GRIS_TEXTE,
             font=("Courier", 8), wraplength=300, justify="left")
         self.label_nom_photo.pack(pady=4, anchor="w")
-
         self.btn_supprimer = tk.Button(parent,
             text=self.t("supprimer"),
             font=("Arial", 10), bg="#E7D4D6", fg="black",
             relief="flat", state="disabled",
             command=self._supprimer_derniere_photo)
         self.btn_supprimer.pack(fill="x", pady=2)
-
-        # ── Separateur ────────────────────────────────────────────────────────
         tk.Frame(parent, bg="#CCCCCC", height=1).pack(fill="x", pady=(12, 6))
-
         self.lbl_session = tk.Label(parent,
             text=self.t("session_titre"),
             font=("Arial", 10, "bold"), fg=C_GRIS_TEXTE, bg=C_BG)
         self.lbl_session.pack(anchor="w")
-
-        # Note d'instruction : wraplength large pour ne pas couper le texte
         self.lbl_session_note = tk.Label(parent,
             text=self.t("session_note"),
             bg=C_BG, fg="#666666",
             font=("Arial", 9), wraplength=290, justify="left")
         self.lbl_session_note.pack(anchor="w", pady=(2, 6))
-
         frame_liste = tk.Frame(parent, bg=C_BG)
         frame_liste.pack(fill="both", expand=True)
         self.liste_photos = tk.Listbox(frame_liste,
@@ -273,14 +263,12 @@ class InterfaceAcquisition:
         self.liste_photos.pack(side="left", fill="both", expand=True)
         sc_liste.pack(side="right", fill="y")
         self.liste_photos.bind("<<ListboxSelect>>", self._afficher_photo_selectionnee)
-
         self.btn_stack = tk.Button(parent,
             text=self.t("btn_stack"),
             font=("Arial", 10, "bold"), bg=C_STACK_BG, fg="white",
             relief="flat", cursor="hand2", pady=6,
             command=self._lancer_stacking)
         self.btn_stack.pack(fill="x", pady=(8, 0))
-
         self.lbl_stack_statut = tk.Label(parent,
             text="", bg=C_BG, fg=C_GRIS_TEXTE,
             font=("Arial", 9, "italic"), wraplength=290)
@@ -351,16 +339,18 @@ class InterfaceAcquisition:
         self.fenetre.after(0, lambda: self.log(msg))
 
     def _verifier_canon(self):
-        subprocess.run(["pkill", "-9", "-f", "gvfs-gphoto2"], capture_output=True)
-        subprocess.run(["pkill", "-9", "-f", "gvfsd-gphoto2"], capture_output=True)
-        time.sleep(1.5)
+        """
+        Verifie le Canon via gphoto2 --auto-detect.
+        connecter_canon() retourne True/False (plus de handle EDSDK).
+        gvfs est tue automatiquement dans connecter_canon().
+        """
         try:
             from acquisition.canon import connecter_canon
-            cam = connecter_canon()
-            if cam:
+            ok = connecter_canon()
+            if ok:
                 self.canon_disponible = True
                 self.fenetre.after(0, lambda: self.statuts["Canon"].configure(
-                    text=self.t("connecte_edsdk"), fg=C_VERT))
+                    text="Connecte (gphoto2)", fg=C_VERT))
                 self.fenetre.after(0, lambda: self.log(self.t("canon_ok")))
             else:
                 self.canon_disponible = False
@@ -370,7 +360,7 @@ class InterfaceAcquisition:
         except Exception as e:
             self.canon_disponible = False
             self.fenetre.after(0, lambda: self.statuts["Canon"].configure(
-                text=self.t("err_edsdk"), fg=C_ROUGE))
+                text="Erreur", fg=C_ROUGE))
             self.fenetre.after(0, lambda err=e: self.log(f"{self.t('canon_err')} : {err}"))
 
     def _verifier_jeulin(self):
@@ -505,6 +495,7 @@ class InterfaceAcquisition:
                     self.fenetre.after(0, lambda err=e: self.log(f"{self.t('canon_err')} : {err}"))
             else:
                 self.fenetre.after(0, lambda: self.log(self.t("canon_decon")))
+
         elif appareil == "Jeulin":
             if self.index_jeulin is not None:
                 try:
@@ -514,6 +505,7 @@ class InterfaceAcquisition:
                     self.fenetre.after(0, lambda err=e: self.log(f"{self.t('jeulin_err')} : {err}"))
             else:
                 self.fenetre.after(0, lambda: self.log(self.t("jeulin_decon")))
+
         elif appareil == "Android":
             if self.android_disponible and self.android_id:
                 try:
@@ -540,8 +532,7 @@ class InterfaceAcquisition:
         selection = self.liste_photos.curselection()
         if len(selection) < 2:
             self.log(self.t("stack_sel_insuffisante"))
-            self.lbl_stack_statut.configure(
-                text=self.t("stack_sel_insuffisante"), fg=C_ROUGE)
+            self.lbl_stack_statut.configure(text=self.t("stack_sel_insuffisante"), fg=C_ROUGE)
             self.fenetre.after(4000, lambda: self.lbl_stack_statut.configure(text=""))
             return
         chemins = []
@@ -554,8 +545,8 @@ class InterfaceAcquisition:
         if len(chemins) < 2:
             self.log(self.t("stack_chemins_introuvables"))
             return
-        premier = os.path.basename(chemins[0])
-        base = premier.rsplit("_photo", 1)[0] if "_photo" in premier else os.path.splitext(premier)[0]
+        premier  = os.path.basename(chemins[0])
+        base     = premier.rsplit("_photo", 1)[0] if "_photo" in premier else os.path.splitext(premier)[0]
         nom_sortie    = f"{base}_STACKEE.tiff"
         chemin_sortie = os.path.join(os.path.dirname(chemins[0]), nom_sortie)
         self.log(f"{self.t('stack_debut')} {len(chemins)} {self.t('stack_images')} -> {nom_sortie}")

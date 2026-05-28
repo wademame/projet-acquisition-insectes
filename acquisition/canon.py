@@ -1,122 +1,259 @@
 # acquisition/canon.py
-# Controle du Canon EOS R7 via EDSDK (USB) avec ctypes
+# Controle du Canon EOS R7
 #
-# METHODE : SaveTo = Camera (enregistrement sur carte SD)
-# Le Canon prend la photo et l'ecrit sur sa carte SD.
-# On navigue ensuite dans l'arborescence de la carte pour
-# recuperer le dernier fichier cree et le copier sur le PC.
+# Sur Linux  : gphoto2 CLI (capture directe sans carte SD)
+# Sur Windows : EDSDK via ctypes (DirItemCreated fonctionne sur Windows)
 #
-# Pourquoi cette methode plutot que SaveTo = Host ?
-# Sur Linux, l'evenement DirItemCreated de l'EDSDK ne se declenche
-# pas de facon fiable en mode SaveTo Host. C'est un probleme connu
-# sur Linux (fonctionne bien sur Windows et Mac).
-# La methode par navigation d'arborescence est celle utilisee par
-# le programme exemple officiel Canon (MultiCamCui) et elle fonctionne.
+# Le choix est automatique selon le systeme d'exploitation detecte.
 
-import ctypes
 import os
+import sys
 import time
+import subprocess
 import threading
 
-CHEMIN_LIB = os.path.expanduser(
+# Detecter le systeme d'exploitation
+WINDOWS = sys.platform == "win32"
+LINUX   = sys.platform.startswith("linux")
+
+# ── Chemins bibliotheques ─────────────────────────────────────────────────────
+CHEMIN_LIB_LINUX   = os.path.expanduser(
     "~/EDSDKv132010L/Linux/EDSDK/Library/x86_64/libEDSDK.so"
 )
+CHEMIN_LIB_WINDOWS = r"C:\EDSDK\Library\EDSDK.dll"
 
-# ── Constantes EDSDK ──────────────────────────────────────────────────────────
+# ── Constantes EDSDK (Windows uniquement) ─────────────────────────────────────
 EDS_ERR_OK                             = 0x00000000
 kEdsCameraCommand_TakePicture          = 0x00000000
 kEdsFileCreateDisposition_CreateAlways = 0x00000002
 kEdsAccess_ReadWrite                   = 0x00000001
-kEdsSaveTo_Camera                      = 0x00000001   # enregistre sur la carte SD
+kEdsObjectEvent_DirItemCreated         = 0x00000203
 kEdsPropID_SaveTo                      = 0x00000390
+kEdsSaveTo_Host                        = 0x00000002
 
-# ── Variables globales ────────────────────────────────────────────────────────
+# ── Variables globales EDSDK (Windows) ───────────────────────────────────────
 _edsdk            = None
 _camera           = None
 _sdk_initialise   = False
+_callback_ref     = None
 _thread_events    = None
 _continuer_events = False
+_chemin_destination = None
 
 
-def _boucle_events():
-    """Pompe la file d'evenements EDSDK toutes les 50ms."""
+# ==============================================================================
+# PARTIE COMMUNE : detection et connexion
+# ==============================================================================
+
+def _gvfs_libre():
+    """
+    Tue les processus gvfs sur Linux.
+    gvfs prend automatiquement le controle du Canon des qu'il est branche.
+    Sans cette etape, ni gphoto2 ni l'EDSDK ne peuvent y acceder.
+    """
+    if LINUX:
+        subprocess.run(["pkill", "-9", "-f", "gvfs-gphoto2"],  capture_output=True)
+        subprocess.run(["pkill", "-9", "-f", "gvfsd-gphoto2"], capture_output=True)
+        time.sleep(1.5)
+
+
+def connecter_canon():
+    """
+    Detecte le Canon et etablit la connexion.
+
+    Linux   : verifie via gphoto2 --auto-detect, retourne True/False
+    Windows : charge l'EDSDK, ouvre une session, retourne le handle ou None
+
+    Retour :
+      Linux   -> True si detecte, False sinon
+      Windows -> handle camera (ctypes.c_void_p) si connecte, None sinon
+    """
+    _gvfs_libre()
+
+    if LINUX:
+        return _connecter_linux()
+    else:
+        return _connecter_windows()
+
+
+def prendre_photo_canon(chemin_fichier):
+    """
+    Declenche le Canon et sauvegarde la photo dans chemin_fichier.
+
+    Linux   : utilise gphoto2 --capture-image-and-download
+    Windows : utilise l'EDSDK avec le callback DirItemCreated
+
+    Retourne chemin_fichier si succes, None sinon.
+    """
+    if LINUX:
+        return _prendre_photo_linux(chemin_fichier)
+    else:
+        return _prendre_photo_windows(chemin_fichier)
+
+
+def deconnecter_canon():
+    """Ferme proprement la connexion."""
+    if WINDOWS:
+        _deconnecter_windows()
+
+
+# ==============================================================================
+# LINUX : gphoto2 CLI
+# ==============================================================================
+
+def _connecter_linux():
+    """
+    Verifie que le Canon est detecte par gphoto2.
+    gphoto2 est un outil en ligne de commande qui supporte des centaines
+    d'appareils photo via le protocole PTP/USB.
+    """
+    try:
+        r = subprocess.run(
+            ["gphoto2", "--auto-detect"],
+            capture_output=True, text=True, timeout=10
+        )
+        if "usb:" in r.stdout:
+            print("[Canon Linux] Canon detecte via gphoto2.")
+            return True
+        else:
+            print("[Canon Linux] Aucun appareil detecte.")
+            print("[Canon Linux] Verifiez : Canon allume + cable USB.")
+            return False
+    except FileNotFoundError:
+        print("[Canon Linux] gphoto2 non installe.")
+        print("[Canon Linux] Installez-le : sudo apt install gphoto2")
+        return False
+    except subprocess.TimeoutExpired:
+        print("[Canon Linux] Timeout detection.")
+        return False
+
+
+def _prendre_photo_linux(chemin_fichier):
+    """
+    Declenche et recupere la photo via gphoto2.
+
+    gphoto2 --capture-image-and-download :
+      1. Declenche l'obturateur
+      2. Recupere la photo depuis l'appareil (sans carte SD necessaire)
+      3. La sauvegarde dans chemin_fichier
+      4. Supprime le fichier temporaire sur l'appareil
+    """
+    _gvfs_libre()
+
+    dossier = os.path.dirname(chemin_fichier)
+    if dossier:
+        os.makedirs(dossier, exist_ok=True)
+
+    print(f"[Canon Linux] gphoto2 -> {chemin_fichier}")
+
+    try:
+        r = subprocess.run(
+            [
+                "gphoto2",
+                "--capture-image-and-download",
+                "--filename", chemin_fichier,
+                "--force-overwrite"
+            ],
+            capture_output=True, text=True, timeout=30
+        )
+
+        if r.returncode == 0 and os.path.exists(chemin_fichier):
+            taille_ko = os.path.getsize(chemin_fichier) / 1024
+            print(f"[Canon Linux] Photo sauvegardee ({taille_ko:.0f} Ko)")
+            return chemin_fichier
+        else:
+            print(f"[Canon Linux] ECHEC gphoto2 (code {r.returncode})")
+            if r.stderr:
+                print(f"[Canon Linux] {r.stderr.strip()}")
+            if "Could not claim" in r.stderr or "Busy" in r.stderr:
+                print("[Canon Linux] gvfs a repris le controle. Relancez la detection.")
+            if "focus" in r.stderr.lower():
+                print("[Canon Linux] Probleme autofocus. Passez l'objectif en MF.")
+            return None
+
+    except subprocess.TimeoutExpired:
+        print("[Canon Linux] TIMEOUT 30s.")
+        return None
+    except FileNotFoundError:
+        print("[Canon Linux] gphoto2 non installe. sudo apt install gphoto2")
+        return None
+
+
+# ==============================================================================
+# WINDOWS : EDSDK via ctypes
+# ==============================================================================
+
+def _boucle_events_windows():
+    """
+    Pompe la file d'evenements EDSDK toutes les 50ms.
+    Sur Windows, DirItemCreated se declenche correctement.
+    Ce thread doit tourner pendant toute la duree de la session.
+    """
     while _continuer_events:
         if _edsdk:
             _edsdk.EdsGetEvent()
         time.sleep(0.05)
 
 
-def charger_edsdk():
+def _charger_edsdk_windows():
+    """Charge EDSDK.dll sur Windows."""
     global _edsdk
-    chemin = os.path.expanduser(CHEMIN_LIB)
+    import ctypes
+
+    chemin = CHEMIN_LIB_WINDOWS
     if not os.path.exists(chemin):
-        for e in [
-            os.path.expanduser("~/EDSDKv132010L/Linux/EDSDK/Library/x86_64/libEDSDK.so"),
-            "/usr/local/lib/libEDSDK.so",
-            "./libEDSDK.so",
-        ]:
-            if os.path.exists(e):
-                chemin = e
-                break
-        else:
-            print("[EDSDK] ERREUR : libEDSDK.so introuvable.")
-            return False
+        print(f"[Canon Windows] EDSDK.dll introuvable : {chemin}")
+        print("[Canon Windows] Installez l'EDSDK et verifiez le chemin dans canon.py")
+        return False
     try:
-        _edsdk = ctypes.CDLL(chemin)
-        print(f"[EDSDK] Charge depuis : {chemin}")
+        # WinDLL pour les DLL Windows (convention d'appel stdcall)
+        _edsdk = ctypes.WinDLL(chemin)
+        print(f"[Canon Windows] EDSDK.dll charge : {chemin}")
         return True
     except OSError as e:
-        print(f"[EDSDK] ERREUR chargement : {e}")
+        print(f"[Canon Windows] ERREUR chargement DLL : {e}")
         return False
 
 
-def initialiser_edsdk():
-    global _sdk_initialise
-    if _sdk_initialise:
-        return True
-    if _edsdk is None:
-        if not charger_edsdk():
-            return False
-    err = _edsdk.EdsInitializeSDK()
-    if err != EDS_ERR_OK:
-        print(f"[EDSDK] ERREUR initialisation : {hex(err)}")
-        return False
-    _sdk_initialise = True
-    print("[EDSDK] SDK initialise.")
-    return True
-
-
-def connecter_canon():
+def _connecter_windows():
     """
-    Connecte le Canon EOS R7 et ouvre une session.
-    Demarre le thread d'evenements en arriere-plan.
-    Retourne le handle camera, ou None si echec.
+    Charge l'EDSDK, initialise le SDK et ouvre une session Canon.
+    Demarre le thread d'evenements.
+    Retourne le handle camera ou None.
     """
-    global _camera, _thread_events, _continuer_events
+    import ctypes
+    global _camera, _sdk_initialise, _thread_events, _continuer_events
 
     if _camera is not None:
         return _camera
 
-    if not initialiser_edsdk():
-        return None
+    if _edsdk is None:
+        if not _charger_edsdk_windows():
+            return None
+
+    if not _sdk_initialise:
+        err = _edsdk.EdsInitializeSDK()
+        if err != EDS_ERR_OK:
+            print(f"[Canon Windows] ERREUR EdsInitializeSDK : {hex(err)}")
+            return None
+        _sdk_initialise = True
 
     # Demarrer le thread d'evenements
     _continuer_events = True
-    _thread_events = threading.Thread(target=_boucle_events, daemon=True)
+    _thread_events = threading.Thread(target=_boucle_events_windows, daemon=True)
     _thread_events.start()
 
     camera_list = ctypes.c_void_p()
     err = _edsdk.EdsGetCameraList(ctypes.byref(camera_list))
     if err != EDS_ERR_OK:
-        print(f"[EDSDK] ERREUR EdsGetCameraList : {hex(err)}")
+        print(f"[Canon Windows] ERREUR EdsGetCameraList : {hex(err)}")
         return None
 
     count = ctypes.c_int()
     _edsdk.EdsGetChildCount(camera_list, ctypes.byref(count))
-    print(f"[EDSDK] {count.value} camera(s) detectee(s).")
 
     if count.value == 0:
-        print("[EDSDK] Aucune camera. Canon allume + cable USB + gvfs tue ?")
+        print("[Canon Windows] Aucune camera detectee.")
         _edsdk.EdsRelease(camera_list)
         return None
 
@@ -126,256 +263,132 @@ def connecter_canon():
 
     err = _edsdk.EdsOpenSession(camera)
     if err != EDS_ERR_OK:
-        print(f"[EDSDK] ERREUR EdsOpenSession : {hex(err)}")
+        print(f"[Canon Windows] ERREUR EdsOpenSession : {hex(err)}")
         _edsdk.EdsRelease(camera)
         return None
 
     _camera = camera
-    print("[EDSDK] Canon EOS R7 connecte. Session ouverte.")
+    print(f"[Canon Windows] Canon EOS R7 connecte via EDSDK.")
     return camera
 
 
-def _compter_fichiers_carte(camera):
+def _prendre_photo_windows(chemin_fichier):
     """
-    Compte le nombre total de fichiers sur la carte SD du Canon.
-    Utilise pour detecter quand une nouvelle photo a ete prise.
-    Navigue : Camera -> Volume -> Dossier -> Fichiers
+    Declenche et recupere la photo via EDSDK sur Windows.
+    Utilise le callback DirItemCreated qui fonctionne sur Windows.
     """
-    total = 0
-    try:
-        # Niveau 1 : volumes (cartes memoire)
-        nb_volumes = ctypes.c_int()
-        _edsdk.EdsGetChildCount(camera, ctypes.byref(nb_volumes))
+    import ctypes
+    global _chemin_destination, _callback_ref
 
-        for v in range(nb_volumes.value):
-            volume = ctypes.c_void_p()
-            if _edsdk.EdsGetChildAtIndex(camera, v, ctypes.byref(volume)) != EDS_ERR_OK:
-                continue
-
-            # Niveau 2 : dossiers dans le volume
-            nb_dossiers = ctypes.c_int()
-            _edsdk.EdsGetChildCount(volume, ctypes.byref(nb_dossiers))
-
-            for d in range(nb_dossiers.value):
-                dossier = ctypes.c_void_p()
-                if _edsdk.EdsGetChildAtIndex(volume, d, ctypes.byref(dossier)) != EDS_ERR_OK:
-                    continue
-
-                # Niveau 3 : fichiers dans le dossier
-                nb_fichiers = ctypes.c_int()
-                _edsdk.EdsGetChildCount(dossier, ctypes.byref(nb_fichiers))
-                total += nb_fichiers.value
-                _edsdk.EdsRelease(dossier)
-
-            _edsdk.EdsRelease(volume)
-    except Exception:
-        pass
-    return total
-
-
-def _telecharger_dernier_fichier(camera, chemin_destination):
-    """
-    Navigue dans l'arborescence de la carte SD du Canon et
-    telecharge le DERNIER fichier de chaque dossier.
-    
-    Structure de la carte Canon :
-    Camera
-    └── Volume (carte SD)
-        └── DCIM/
-            └── 100CANON/ (ou numerote autrement)
-                ├── IMG_0001.JPG
-                ├── IMG_0002.JPG
-                └── IMG_XXXX.JPG  <- on veut celui-la (le dernier)
-    """
-    try:
-        nb_volumes = ctypes.c_int()
-        _edsdk.EdsGetChildCount(camera, ctypes.byref(nb_volumes))
-
-        if nb_volumes.value == 0:
-            print("[Canon] Aucun volume (carte SD) trouve.")
-            return False
-
-        # Prendre le premier volume (premiere carte SD)
-        volume = ctypes.c_void_p()
-        if _edsdk.EdsGetChildAtIndex(camera, 0, ctypes.byref(volume)) != EDS_ERR_OK:
-            print("[Canon] Impossible d'acceder au volume.")
-            return False
-
-        nb_dossiers = ctypes.c_int()
-        _edsdk.EdsGetChildCount(volume, ctypes.byref(nb_dossiers))
-        print(f"[Canon] {nb_dossiers.value} dossier(s) sur la carte.")
-
-        # Parcourir tous les dossiers et trouver le dernier fichier
-        dernier_fichier = None
-
-        for d in range(nb_dossiers.value):
-            dossier = ctypes.c_void_p()
-            if _edsdk.EdsGetChildAtIndex(volume, d, ctypes.byref(dossier)) != EDS_ERR_OK:
-                continue
-
-            nb_fichiers = ctypes.c_int()
-            _edsdk.EdsGetChildCount(dossier, ctypes.byref(nb_fichiers))
-
-            if nb_fichiers.value > 0:
-                # Prendre le dernier fichier du dossier
-                fichier = ctypes.c_void_p()
-                idx_dernier = nb_fichiers.value - 1
-                if _edsdk.EdsGetChildAtIndex(dossier, idx_dernier, ctypes.byref(fichier)) == EDS_ERR_OK:
-                    if dernier_fichier is not None:
-                        _edsdk.EdsRelease(dernier_fichier)
-                    dernier_fichier = fichier
-
-            _edsdk.EdsRelease(dossier)
-
-        _edsdk.EdsRelease(volume)
-
-        if dernier_fichier is None:
-            print("[Canon] Aucun fichier trouve sur la carte.")
-            return False
-
-        # Telecharger le fichier vers le PC
-        print(f"[Canon] Telechargement vers {chemin_destination}...")
-        os.makedirs(
-            os.path.dirname(chemin_destination) if os.path.dirname(chemin_destination) else ".",
-            exist_ok=True
-        )
-
-        stream = ctypes.c_void_p()
-        err = _edsdk.EdsCreateFileStream(
-            chemin_destination.encode("utf-8"),
-            kEdsFileCreateDisposition_CreateAlways,
-            kEdsAccess_ReadWrite,
-            ctypes.byref(stream)
-        )
-
-        if err != EDS_ERR_OK:
-            print(f"[Canon] ERREUR EdsCreateFileStream : {hex(err)}")
-            _edsdk.EdsRelease(dernier_fichier)
-            return False
-
-        # Taille 0 = telecharger le fichier entier
-        _edsdk.EdsDownload(dernier_fichier, ctypes.c_ulonglong(0), stream)
-        _edsdk.EdsDownloadComplete(dernier_fichier)
-        _edsdk.EdsRelease(stream)
-        _edsdk.EdsRelease(dernier_fichier)
-
-        # Verifier que le fichier a bien ete cree et qu'il n'est pas vide
-        if os.path.exists(chemin_destination) and os.path.getsize(chemin_destination) > 0:
-            taille_ko = os.path.getsize(chemin_destination) / 1024
-            print(f"[Canon] Fichier sauvegarde ({taille_ko:.0f} Ko) -> {chemin_destination}")
-            return True
-        else:
-            print("[Canon] ERREUR : fichier vide ou non cree.")
-            return False
-
-    except Exception as e:
-        print(f"[Canon] ERREUR navigation carte : {e}")
-        return False
-
-
-def prendre_photo_canon(chemin_fichier):
-    """
-    Declenche le Canon et recupere la photo depuis la carte SD.
-
-    Etapes :
-    1. Compter les fichiers existants sur la carte (avant)
-    2. Configurer SaveTo = Camera (enregistrement sur carte SD)
-    3. Declencher TakePicture
-    4. Attendre que le nombre de fichiers augmente (max 15s)
-    5. Telecharger le dernier fichier vers chemin_fichier
-
-    Necessite une carte SD dans le Canon.
-
-    Retourne chemin_fichier si succes, None sinon.
-    """
     if _camera is None:
-        print("[Canon] Pas de session ouverte. Appeler connecter_canon() d'abord.")
+        print("[Canon Windows] Pas de session ouverte.")
         return None
 
-    # Compter les fichiers AVANT le declenchement
-    nb_avant = _compter_fichiers_carte(_camera)
-    print(f"[Canon] Fichiers sur la carte avant : {nb_avant}")
+    os.makedirs(
+        os.path.dirname(chemin_fichier) if os.path.dirname(chemin_fichier) else ".",
+        exist_ok=True
+    )
+    _chemin_destination = chemin_fichier
 
-    # Configurer SaveTo = Camera (enregistrement sur carte SD)
-    save_to = ctypes.c_uint(kEdsSaveTo_Camera)
-    _edsdk.EdsSetPropertyData(
-        _camera, kEdsPropID_SaveTo, 0,
-        ctypes.sizeof(save_to), ctypes.byref(save_to)
+    photo_recue = [False]
+    resultat    = [None]
+
+    CALLBACK_TYPE = ctypes.CFUNCTYPE(
+        ctypes.c_uint,
+        ctypes.c_uint,
+        ctypes.c_void_p,
+        ctypes.c_void_p
     )
 
-    # Declencher
-    print("[Canon] Declenchement...")
+    def on_object_event(event, obj, context):
+        if event == kEdsObjectEvent_DirItemCreated:
+            chemin = _chemin_destination
+            stream = ctypes.c_void_p()
+            err_s = _edsdk.EdsCreateFileStream(
+                chemin.encode("utf-8"),
+                kEdsFileCreateDisposition_CreateAlways,
+                kEdsAccess_ReadWrite,
+                ctypes.byref(stream)
+            )
+            if err_s == EDS_ERR_OK:
+                _edsdk.EdsDownload(obj, ctypes.c_ulonglong(0), stream)
+                _edsdk.EdsDownloadComplete(obj)
+                _edsdk.EdsRelease(stream)
+                print(f"[Canon Windows] Photo sauvegardee -> {chemin}")
+                resultat[0] = chemin
+            else:
+                print(f"[Canon Windows] ERREUR EdsCreateFileStream : {hex(err_s)}")
+                _edsdk.EdsDownloadCancel(obj)
+            _edsdk.EdsRelease(obj)
+            photo_recue[0] = True
+        return EDS_ERR_OK
+
+    _callback_ref = CALLBACK_TYPE(on_object_event)
+
+    _edsdk.EdsSetObjectEventHandler(
+        _camera, kEdsObjectEvent_DirItemCreated, _callback_ref, None
+    )
+
+    # SaveTo = Host sur Windows
+    import ctypes as ct
+    save_to = ct.c_uint(kEdsSaveTo_Host)
+    _edsdk.EdsSetPropertyData(
+        _camera, kEdsPropID_SaveTo, 0, ct.sizeof(save_to), ct.byref(save_to)
+    )
+
     err = _edsdk.EdsSendCommand(_camera, kEdsCameraCommand_TakePicture, 0)
     if err != EDS_ERR_OK:
-        print(f"[Canon] ERREUR declenchement : {hex(err)}")
-        if err == 0x8D:
-            print("[Canon] Erreur autofocus. Passez l'objectif en mode MF.")
-        elif err == 0x61:
-            print("[Canon] Handle invalide. Reconnectez le Canon.")
+        print(f"[Canon Windows] ERREUR declenchement : {hex(err)}")
         return None
 
-    print("[Canon] Commande envoyee. Attente de l'ecriture sur la carte...")
-
-    # Attendre que le nombre de fichiers augmente (max 15 secondes)
-    for tentative in range(150):   # 150 x 100ms = 15 secondes
+    print("[Canon Windows] Attente de la photo (max 20s)...")
+    debut = time.time()
+    while not photo_recue[0]:
         time.sleep(0.1)
-        nb_apres = _compter_fichiers_carte(_camera)
-        if nb_apres > nb_avant:
-            print(f"[Canon] Nouvelle photo detectee sur la carte ({nb_apres} fichiers).")
-            break
-    else:
-        print("[Canon] TIMEOUT : aucune nouvelle photo sur la carte apres 15s.")
-        print("[Canon] Verifiez que le Canon est en mode prise de vue (M, Av, Tv, P).")
-        return None
+        if time.time() - debut > 20:
+            print("[Canon Windows] TIMEOUT.")
+            return None
 
-    # Attendre 0.5s supplementaires pour que l'ecriture soit complete
-    time.sleep(0.5)
-
-    # Telecharger le dernier fichier
-    if _telecharger_dernier_fichier(_camera, chemin_fichier):
-        return chemin_fichier
-    return None
+    return resultat[0]
 
 
-def deconnecter_canon():
-    """Ferme la session et libere les ressources."""
+def _deconnecter_windows():
+    """Ferme la session EDSDK sur Windows."""
     global _camera, _sdk_initialise, _continuer_events
     _continuer_events = False
     if _camera is not None:
         _edsdk.EdsCloseSession(_camera)
         _edsdk.EdsRelease(_camera)
         _camera = None
-        print("[Canon] Session fermee.")
     if _edsdk is not None and _sdk_initialise:
         _edsdk.EdsTerminateSDK()
         _sdk_initialise = False
+    print("[Canon Windows] Deconnecte.")
 
 
-# ── Test direct ───────────────────────────────────────────────────────────────
+# ==============================================================================
+# TEST DIRECT
+# ==============================================================================
+
 if __name__ == "__main__":
-    import subprocess
-
     print("=" * 50)
-    print("TEST CANON EOS R7 — methode carte SD")
+    print(f"TEST CANON — systeme : {'Windows' if WINDOWS else 'Linux'}")
     print("=" * 50)
-    print("IMPORTANT : la carte SD doit etre dans le Canon.")
-    print()
 
-    subprocess.run(["pkill", "-9", "-f", "gvfs-gphoto2"], capture_output=True)
-    subprocess.run(["pkill", "-9", "-f", "gvfsd-gphoto2"], capture_output=True)
-    time.sleep(2)
-
-    cam = connecter_canon()
-    if not cam:
-        print("ECHEC connexion.")
+    print("\n[1/2] Detection...")
+    ok = connecter_canon()
+    if not ok:
+        print("ECHEC : Canon non detecte.")
         exit(1)
+    print("Canon detecte.")
 
+    print("\n[2/2] Prise de photo...")
     os.makedirs("images/test", exist_ok=True)
     res = prendre_photo_canon("images/test/canon_test.jpg")
 
     if res and os.path.exists(res):
         print(f"\nSUCCES : {res} ({os.path.getsize(res) / 1024:.0f} Ko)")
     else:
-        print("\nECHEC : photo non recuperee.")
+        print("\nECHEC.")
 
     deconnecter_canon()
