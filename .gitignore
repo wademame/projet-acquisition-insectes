@@ -16,7 +16,7 @@ __pycache__/
 .DS_Store
 *.log
 
-# EDSDK — bibliotheque proprietaire Canon, ne pas publier
+# EDSDK bibliotheque proprietaire Canon, ne pas publier
 EDSDKv*/
 *.so
 *.dll
