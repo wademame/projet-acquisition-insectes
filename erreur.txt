@@ -55,3 +55,20 @@ Release:	22.3
 Codename:	zena
 
 
+(venv) irma@irma-HP-Compaq-Elite-8300-CMT:~/projet-acquisition-insectes$ python3 acquisition/canon.py 
+==================================================
+TEST CANON — Linux
+==================================================
+
+[1/2] Detection...
+[Canon Linux] Canon detecte via gphoto2.
+Canon detecte.
+
+[2/2] Prise de photo...
+[Canon Linux] Declenchement -> images/test/canon_test.jpg
+[Canon Linux] OK (7371 Ko) -> images/test/canon_test.jpg
+
+SUCCES : images/test/canon_test.jpg (7371 Ko)
+
+
+
