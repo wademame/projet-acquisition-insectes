@@ -170,7 +170,7 @@ Sur Linux :
 Double-cliquez sur le fichier "lancer_acquisition.sh" situé sur le bureau,
 ou ouvrez un terminal et tapez :
 
-    cd ~/projet_insectes
+    cd ~/projet-acquisition-insectes
 
     source venv/bin/activate
 
@@ -233,7 +233,7 @@ d) Le logiciel produit automatiquement une image entièrement nette, sauvegardé
 
 4) OÙ SONT STOCKÉES LES PHOTOS
 
-Les photos se trouvent dans le dossier projet_insectes puis dans images.
+Les photos se trouvent dans le dossier projet-acquisition-insectes puis dans images.
 Vous verrez un dossier pour chaque appareil et dans chaque appareil .... (expliquer avec des mots)
 
 Les photos ne sont jamais écrasées. Si vous prenez plusieurs photos avec les

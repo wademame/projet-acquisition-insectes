@@ -1,4 +1,4 @@
 #!/bin/bash
-cd ~/projet_insectes
+cd ~/projet-acquisition-insectes
 source venv/bin/activate
 python3 interface.py
