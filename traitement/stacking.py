@@ -145,7 +145,7 @@ def focus_stacking(liste_chemins, chemin_sortie):
     return None
 
 
-# ── Test depuis le terminal ───────────────────────────────────────────────────
+# Test depuis le terminal
 # Usage : python3 traitement/stacking.py photo1.jpg photo2.jpg photo3.jpg sortie.tiff
 #
 # Exemple concret avec vos photos :

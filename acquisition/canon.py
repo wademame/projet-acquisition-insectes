@@ -3,14 +3,7 @@
 #
 # Linux   : gphoto2 CLI (sudo apt install gphoto2)
 # Windows : digiCamControl CLI (https://digicamcontrol.com/download)
-#
-# Pourquoi pas l'EDSDK ?
-# L'EDSDK Canon presente deux problemes bloquants non resolus :
-#   - Sur Linux : l'evenement DirItemCreated ne se declenche jamais,
-#     bug connu de Canon non corrige.
-#   - Sur Windows : la boucle d'evenements COM doit tourner dans le thread
-#     principal, incompatible avec le threading de Tkinter.
-# gphoto2 (Linux) et digiCamControl (Windows) contournent ces problemes.
+
 
 import os
 import sys
@@ -24,10 +17,8 @@ LINUX   = sys.platform.startswith("linux")
 # Chemin vers digiCamControl sur Windows
 DIGICAM_CMD = r"C:\Program Files (x86)\digiCamControl\CameraControlCmd.exe"
 
-
-# ==============================================================================
 # INTERFACE COMMUNE
-# ==============================================================================
+
 
 def connecter_canon():
     """
@@ -57,9 +48,9 @@ def deconnecter_canon():
     pass
 
 
-# ==============================================================================
+
 # LINUX — gphoto2
-# ==============================================================================
+
 
 def _gvfs_libre():
     """
@@ -126,9 +117,9 @@ def _prendre_photo_linux(chemin_fichier):
         return None
 
 
-# ==============================================================================
+
 # WINDOWS — digiCamControl
-# ==============================================================================
+
 
 def _connecter_windows():
     """
@@ -237,9 +228,9 @@ def _prendre_photo_windows(chemin_fichier):
         return None
 
 
-# ==============================================================================
+
 # TEST DIRECT
-# ==============================================================================
+
 
 if __name__ == "__main__":
     print("=" * 50)

@@ -56,7 +56,7 @@ class InterfaceAcquisition:
     def t(self, cle):
         return TEXTES[self.langue][cle]
 
-    # ── Construction ──────────────────────────────────────────────────────────
+    # Construction
 
     def _construire_interface(self):
         self._barre_titre()
@@ -276,7 +276,7 @@ class InterfaceAcquisition:
             font=("Arial", 9, "italic"), wraplength=290)
         self.lbl_stack_statut.pack(anchor="w", pady=(3, 0))
 
-    # ── Langue ────────────────────────────────────────────────────────────────
+    # Langue
 
     def _changer_langue(self):
         self.langue = "EN" if self.langue == "FR" else "FR"
@@ -309,7 +309,7 @@ class InterfaceAcquisition:
         self.lbl_session_note.configure(text=self.t("session_note"))
         self.btn_stack.configure(text=self.t("btn_stack"))
 
-    # ── Journal ───────────────────────────────────────────────────────────────
+    # Journal
 
     def log(self, message):
         heure = datetime.datetime.now().strftime("%H:%M:%S")
@@ -323,7 +323,7 @@ class InterfaceAcquisition:
         self.zone_log.delete("1.0", "end")
         self.zone_log.configure(state="disabled")
 
-    # ── Vérification ──────────────────────────────────────────────────────────
+    # Vérification
 
     def _lancer_verification(self):
         threading.Thread(target=self._verifier_tous, daemon=True).start()
@@ -447,7 +447,7 @@ class InterfaceAcquisition:
                 text=self.t("adb_absent"), fg=C_ROUGE))
             self.fenetre.after(0, lambda: self.log(self.t("android_adb_abs")))
 
-    # ── Déclenchement ─────────────────────────────────────────────────────────
+    # Déclenchement
 
     def _valider_champs(self):
         manquants = []
@@ -532,7 +532,7 @@ class InterfaceAcquisition:
         boutons = {"Canon": self.btn_canon, "Jeulin": self.btn_jeulin, "Android": self.btn_android}
         self.fenetre.after(0, lambda: boutons[appareil].configure(state="normal"))
 
-    # ── Focus stacking ────────────────────────────────────────────────────────
+    # Focus stacking
 
     def _lancer_stacking(self):
         selection = self.liste_photos.curselection()
@@ -584,7 +584,7 @@ class InterfaceAcquisition:
         self.fenetre.after(0, lambda: self.btn_stack.configure(state="normal"))
         self.fenetre.after(5000, lambda: self.lbl_stack_statut.configure(text=""))
 
-    # ── Aperçu ────────────────────────────────────────────────────────────────
+    # Aperçu
 
     def _mettre_a_jour_apercu(self, chemin_photo, ajouter_liste=True):
         self.derniere_photo = chemin_photo

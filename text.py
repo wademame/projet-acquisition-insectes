@@ -152,58 +152,54 @@ TEXTES = {
     }
 }
 
-GUIDE_FR = """GUIDE D'UTILISATION
-Système d'acquisition d'images d'insectes
-==========================================
+GUIDE_FR = """GUIDE D'UTILISATION <-- (en gars et au centre)
 
-Sommaire
---------
-1. Présentation du système
-2. Comment ouvrir le logiciel
-3. Étapes à suivre avant chaque prise de vue
-4. Focus stacking : obtenir une image entièrement nette
-5. Où sont stockées les photos
-6. Que faire si un appareil n'est pas détecté
-7. Questions fréquentes
-
-
-1. PRÉSENTATION DU SYSTÈME
----------------------------
 Ce logiciel permet de piloter trois appareils de capture d'images depuis un
 seul écran : un appareil photo Canon EOS R7, une caméra de microscopie Jeulin
-e-Mago et un smartphone Android. Chaque appareil peut être déclenché
-indépendamment. Les photos sont enregistrées automatiquement dans des dossiers
+e-Mago et un smartphone Android. <br> 
+Chaque appareil peut être déclenché indépendamment. Les photos sont enregistrées automatiquement dans des dossiers
 organisés selon l'espèce, le numéro de l'individu et l'appareil utilisé.
 
+-->  (Justifier le texte dans les paragraphes)
 
-2. COMMENT OUVRIR LE LOGICIEL
-------------------------------
+... ici faire un somaire cliquable
+
+1) COMMENT OUVRIR LE LOGICIEL ? <-- (en gras)
+
 Sur Linux :
 Double-cliquez sur le fichier "lancer_acquisition.sh" situé sur le bureau,
 ou ouvrez un terminal et tapez :
+
     cd ~/projet_insectes
+
+    source venv/bin/activate
+
     python3 interface.py
+
+    (fromater les commande en une police couleur etc style code)
 
 Sur Windows :
 Double-cliquez sur le fichier "lancer.bat" situé dans le dossier du projet,
-ou créez un raccourci sur le bureau pointant vers ce fichier.
+ou créez un raccourci sur le bureau pointant vers ce fichier : (clique droit sur le bureau > creer un raccourci > mettre ...)
 
 
-3. ÉTAPES À SUIVRE AVANT CHAQUE PRISE DE VUE
----------------------------------------------
+2) ÉTAPES À SUIVRE AVANT CHAQUE PRISE DE VUE <-- (en gras)
+
 a) Branchez les appareils via leurs câbles USB respectifs.
 
 b) Au démarrage, le logiciel vérifie automatiquement quels appareils sont
-   détectés. Le statut de chaque appareil s'affiche dans la section
-   "Connexion des appareils" :
+   détectés. 
+   Le statut de chaque appareil s'affiche dans la section "Connexion des appareils" :
+
      - Texte vert  : l'appareil est prêt à être utilisé.
-     - Texte rouge : l'appareil n'est pas détecté (voir section 6).
+     - Texte rouge : l'appareil n'est pas détecté (voir section 5).
      - Texte orange : l'appareil est en attente ou pose un problème mineur.
 
 c) Remplissez les quatre champs dans la section "Paramètres de la photo" :
-     - Espèce        : nom de l'espèce étudiée, par exemple "scolyte1"
-     - N° individu   : numéro du spécimen, par exemple 3 pour le troisième
-     - Grossissement : le zoom utilisé sur la loupe binoculaire (10x, 20x...)
+
+     - Espèce        : nom de l'espèce étudiée
+     - N° individu   : numéro du spécimen (par exemple 3 pour le troisième)
+     - Grossissement : le zoom utilisé sur la loupe (10x, 20x...)
      - Angle         : la position de l'insecte sous la loupe.
                        Dorsal = vue de dessus, Side = vue de côté,
                        Front = vue de face, Back = vue de derrière.
@@ -218,13 +214,14 @@ e) La photo apparaît dans l'aperçu à droite. Cliquez dessus pour l'agrandir.
    Si elle ne convient pas, cliquez "Supprimer cette photo" et recommencez.
 
 
-4. FOCUS STACKING : OBTENIR UNE IMAGE ENTIÈREMENT NETTE
----------------------------------------------------------
+3) FOCUS STACKING : OBTENIR UNE IMAGE ENTIÈREMENT NETTE
+
 À fort grossissement, il est impossible d'avoir tout l'insecte net sur une
 seule photo. Le focus stacking résout ce problème en combinant plusieurs
 photos prises à des mises au point différentes.
 
 Étapes :
+
 a) Prenez entre 5 et 10 photos du même insecte sans le bouger, en changeant
    la mise au point manuellement entre chaque prise.
 b) Dans la liste "Photos de cette session", sélectionnez toutes ces photos
@@ -234,173 +231,46 @@ d) Le logiciel produit automatiquement une image entièrement nette, sauvegardé
    dans le même dossier que les photos brutes, avec le suffixe _STACKEE.tiff.
 
 
-5. OÙ SONT STOCKÉES LES PHOTOS
---------------------------------
-    images/
-    +-- Canon/
-    |   +-- scolyte1/
-    |       +-- individu_01/
-    |           +-- scolyte1_ind01_camCanon_mag10x_angleDorsal_photo01.jpg
-    |           +-- scolyte1_ind01_camCanon_mag10x_angleDorsal_STACKEE.tiff
-    +-- Jeulin/
-    +-- Android/
+4) OÙ SONT STOCKÉES LES PHOTOS
+
+Les photos se trouvent dans le dossier projet_insectes puis dans images.
+Vous verrez un dossier pour chaque appareil et dans chaque appareil .... (expliquer avec des mots)
 
 Les photos ne sont jamais écrasées. Si vous prenez plusieurs photos avec les
 mêmes paramètres, le numéro en fin de nom de fichier s'incrémente
 automatiquement (photo01, photo02, photo03...).
 
 
-6. QUE FAIRE SI UN APPAREIL N'EST PAS DÉTECTÉ
------------------------------------------------
+5) QUE FAIRE SI UN APPAREIL N'EST PAS DÉTECTÉ
+
 Canon EOS R7 :
+
   - Vérifiez que l'appareil est allumé et le câble USB branché.
   - Cliquez "Actualiser la détection".
   - Sur Linux, le logiciel libère automatiquement le pilote système (gvfs)
     qui peut bloquer la connexion. Aucune action manuelle requise.
   - Sur Windows, assurez-vous que digiCamControl est installé.
+  (mettre en gras Linux et Windows)
 
 Caméra Jeulin e-Mago :
+
   - Branchez la caméra en USB, puis cliquez "Actualiser la détection".
 
 Smartphone Android :
-  - Vérifiez que le câble USB est branché.
+
+  - Vérifiez que le câble USB est branché et cliquer sur transfert fichiers/android auto etc (ne pas prendre charge seulement en tot cas).
+
   - Sur le téléphone : Paramètres > À propos du téléphone > tapez 7 fois sur
     "Numéro de build" pour activer les options développeur.
     Puis Paramètres > Options développeur > Débogage USB > Activez.
   - Acceptez la fenêtre d'autorisation qui apparaît sur le téléphone.
-  - Si le journal affiche "version ADB incorrecte", contactez la stagiaire.
+  -   si vous n'arrivez pas à trouver ses options, vérifiez votre version d'android dans à propos etc dans les parametre du systeme et 
+  suivez cette documentation https://developer.android.com/studio/debug/dev-options?hl=fr ou https://www.embarcadero.com/starthere/xe5/mobdevsetup/android/fr/enabling_usb_debugging_on_an_android_device.html 
+  qui vous guidera selon votre version et modèle d'android.
 
-
-7. QUESTIONS FRÉQUENTES
-------------------------
-Q : Le bouton ne répond plus après avoir cliqué.
-R : Le bouton est désactivé le temps de la capture. Il se réactive
-    automatiquement. Attendez quelques secondes.
-
-Q : J'ai pris deux photos avec les mêmes paramètres. L'ancienne est-elle perdue ?
-R : Non. Le logiciel numérote les photos automatiquement. La nouvelle photo
-    portera le numéro suivant (photo02, photo03...).
-
-Q : Combien de photos faut-il pour le focus stacking ?
-R : Entre 5 et 10 photos donnent de bons résultats.
 """
 
-GUIDE_EN = """USER GUIDE
-Insect Image Acquisition System
-================================
+GUIDE_EN = """
 
-Table of contents
------------------
-1. System overview
-2. How to open the software
-3. Steps before each capture
-4. Focus stacking: getting a fully sharp image
-5. Where photos are stored
-6. Troubleshooting device detection
-7. Frequently asked questions
-
-
-1. SYSTEM OVERVIEW
--------------------
-This software allows you to control three image capture devices from a single
-screen: a Canon EOS R7 camera, a Jeulin e-Mago microscopy camera, and an
-Android smartphone. Each device can be triggered independently. Photos are
-automatically saved in folders organised by species, individual number, and
-device used.
-
-
-2. HOW TO OPEN THE SOFTWARE
------------------------------
-On Linux:
-Double-click "lancer_acquisition.sh" on the desktop, or open a terminal and type:
-    cd ~/projet_insectes
-    python3 interface.py
-
-On Windows:
-Double-click "lancer.bat" in the project folder, or create a shortcut on the
-desktop pointing to this file.
-
-
-3. STEPS BEFORE EACH CAPTURE
-------------------------------
-a) Connect the devices via their USB cables.
-
-b) At startup, the software automatically checks which devices are detected:
-     - Green text  : the device is ready.
-     - Red text    : not detected (see section 6).
-     - Orange text : pending or minor issue.
-
-c) Fill in the four fields in "Photo parameters":
-     - Species      : name of the species, e.g. "scolyte1"
-     - Individual No.: specimen number
-     - Magnification : zoom level on the loupe (10x, 20x...)
-     - Angle         : Dorsal = top view, Side = side view,
-                       Front = front view, Back = rear view.
-
-d) Click the button for the device you want to use.
-
-e) The photo appears in the preview. Click to enlarge. If unsatisfactory,
-   click "Delete this photo" and try again.
-
-
-4. FOCUS STACKING: GETTING A FULLY SHARP IMAGE
-------------------------------------------------
-At high magnification, it is impossible to have the whole insect sharp in a
-single photo. Focus stacking solves this by combining several photos taken
-at different focus positions.
-
-Steps:
-a) Take 5 to 10 photos of the same insect without moving it, adjusting the
-   focus manually between each shot.
-b) In the "Photos this session" list, select all these photos using Ctrl+click.
-c) Click the green "Launch focus stacking" button.
-d) The software produces a fully sharp image saved in the same folder as the
-   source photos, with the suffix _STACKEE.tiff.
-
-
-5. WHERE PHOTOS ARE STORED
-----------------------------
-    images/
-    +-- Canon/
-    |   +-- scolyte1/
-    |       +-- individu_01/
-    |           +-- scolyte1_ind01_camCanon_mag10x_angleDorsal_photo01.jpg
-    |           +-- scolyte1_ind01_camCanon_mag10x_angleDorsal_STACKEE.tiff
-    +-- Jeulin/
-    +-- Android/
-
-Photos are never overwritten. If you take several photos with the same
-parameters, the number at the end of the filename increments automatically.
-
-
-6. TROUBLESHOOTING DEVICE DETECTION
--------------------------------------
-Canon EOS R7:
-  - Check it is switched on and the USB cable is connected.
-  - Click "Refresh detection".
-  - On Linux, the software automatically releases the system driver (gvfs)
-    that can block the connection. No manual action required.
-  - On Windows, make sure digiCamControl is installed.
-
-Jeulin e-Mago camera:
-  - Plug in via USB, then click "Refresh detection".
-
-Android smartphone:
-  - Check the USB cable is connected.
-  - On the phone: Settings > About phone > tap "Build number" 7 times to
-    enable developer options. Then Settings > Developer options >
-    USB debugging > enable it. Accept the authorisation pop-up.
-  - If the log shows "ADB version mismatch", contact the intern.
-
-
-7. FREQUENTLY ASKED QUESTIONS
--------------------------------
-Q: The button stopped responding after I clicked it.
-A: The button is disabled during the capture and reactivates automatically.
-
-Q: I took two photos with the same parameters. Was the old one overwritten?
-A: No. Photos are numbered automatically (photo02, photo03...).
-
-Q: How many photos are needed for focus stacking?
-A: Between 5 and 10 photos give good results.
+reécrire en anglais
 """
