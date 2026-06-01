@@ -1,177 +1,225 @@
 # traitement/stacking.py
-# Focus stacking : combine plusieurs photos prises a des focales differentes
-# pour produire une seule image entierement nette.
+# Focus stacking : combine plusieurs photos prises à des mises au point
+# différentes pour produire une seule image entièrement nette.
 #
-# Principe :
-#   A fort grossissement, la profondeur de champ est tres faible.
-#   On prend plusieurs photos du meme insecte en changeant la mise au point
-#   a chaque prise (focus different). Chaque photo est nette sur une zone
-#   differente. L'algorithme detecte les zones nettes de chaque image et
-#   les assemble en une seule image ou tout est net.
+# ── Algorithmes utilisés ─────────────────────────────────────────────────────
 #
-# Methode : AlignMTB + Mertens (OpenCV)
-#   AlignMTB : aligne les images pour corriger les micro-decalages
-#              dus a la manipulation manuelle du focus.
-#   Mertens  : fusionne les images en selectionnant les zones nettes
-#              de chacune (algorithme de fusion par exposition multiple).
+# Méthode principale : enfuse (open source, gratuit, disponible sur Linux)
+#   Fait partie du projet Hugin (https://hugin.sourceforge.io).
+#   Utilise une fusion multi-bandes par pondération de l'exposition,
+#   du contraste et de la saturation — même principe que Mertens mais
+#   plus robuste sur les textures fines. Produit des résultats proches
+#   des logiciels professionnels.
+#   Installation : sudo apt install enfuse
 #
-# Installation dans le venv :
-#   pip install opencv-python
+# Fallback (si enfuse non installé) : AlignMTB + Mertens (OpenCV)
 #
-# Le fichier .tiff est un format d'image sans compression, comme le PNG
-# mais utilise en standard dans les domaines scientifiques et medicaux.
-# Il preserves toutes les informations sans perte de qualite.
-# Il s'ouvre directement dans le gestionnaire de fichiers Ubuntu.
+#   AlignMTB (Median Threshold Bitmap) :
+#     Algorithme d'alignement qui compare les niveaux de luminosité de
+#     chaque image et calcule un décalage en x et y pour les superposer.
+#     Corrige les micro-décalages dus à la manipulation manuelle du focus.
+#     Complexité O(n * pixels) — rapide car travaille sur des images
+#     binarisées (seuil médian) plutôt que sur les valeurs brutes.
+#
+#   Mertens (fusion multi-échelle) :
+#     Pour chaque pixel, calcule trois scores : contraste local (variance
+#     du Laplacien dans un voisinage), saturation et exposition.
+#     Combine ces scores avec des pyramides laplaciennes pour une fusion
+#     progressive sans artefacts de couture.
+#     Peut produire de légers halos sur des textures très fines.
+#
+# ── Automatisation du nommage et de la sauvegarde ───────────────────────────
+#
+# Le pipeline complet est :
+#   1. L'utilisateur sélectionne des photos dans l'interface (Ctrl+clic)
+#   2. focus_stacking() est appelé avec la liste des chemins
+#   3. Le nom de sortie est construit automatiquement depuis le nom
+#      de la première photo brute en remplaçant "_photoXX" par "_STACKEE"
+#   4. Le fichier est sauvegardé en .tiff sans compression (sans perte)
+#   5. L'aperçu dans l'interface se met à jour automatiquement
 
 import cv2
 import os
+import sys
+import subprocess
+import shutil
+import tempfile
 import numpy as np
 
 
-def charger_images(liste_chemins):
+def focus_stacking(liste_chemins, chemin_sortie):
     """
-    Charge une liste de fichiers image.
-    Retourne une liste de tableaux numpy (format OpenCV).
-    Ignore les fichiers qui ne peuvent pas etre lus en affichant un avertissement.
+    Fonction principale appelée depuis interface.py.
+
+    Essaie enfuse en priorité (meilleure qualité, gratuit).
+    Si non installé, utilise AlignMTB + Mertens d'OpenCV.
+
+    Paramètres :
+        liste_chemins : liste de chemins vers les photos brutes
+        chemin_sortie : chemin du fichier de sortie (.tiff recommandé)
+    Retourne chemin_sortie si succès, None sinon.
     """
+    if len(liste_chemins) < 2:
+        print("[Stacking] Il faut au moins 2 images.")
+        return None
+
+    print(f"[Stacking] {len(liste_chemins)} images en entrée.")
+
+    if shutil.which("enfuse") is not None:
+        print("[Stacking] Méthode : enfuse (open source)")
+        resultat = _stacking_enfuse(liste_chemins, chemin_sortie)
+        if resultat:
+            return resultat
+        print("[Stacking] enfuse a échoué. Fallback : Mertens OpenCV.")
+    else:
+        print("[Stacking] enfuse non installé. Fallback : Mertens OpenCV.")
+        print("[Stacking] Pour installer enfuse : sudo apt install enfuse")
+
+    return _stacking_mertens(liste_chemins, chemin_sortie)
+
+
+# ==============================================================================
+# MÉTHODE 1 : enfuse (gratuit, open source)
+# ==============================================================================
+
+def _stacking_enfuse(liste_chemins, chemin_sortie):
+    """
+    Focus stacking avec enfuse.
+
+    enfuse prend des images en entrée et produit une image fusionnée
+    en pondérant chaque pixel selon son contraste local, sa saturation
+    et son exposition. C'est conçu pour le HDR mais fonctionne très bien
+    pour le focus stacking.
+
+    On utilise align_image_stack (inclus avec enfuse/hugin) pour aligner
+    les images avant la fusion si disponible, sinon on passe directement
+    à enfuse.
+
+    Installation : sudo apt install enfuse
+    (inclut align_image_stack sur la plupart des distributions)
+    """
+    dossier_sortie = os.path.dirname(os.path.abspath(chemin_sortie))
+    if dossier_sortie:
+        os.makedirs(dossier_sortie, exist_ok=True)
+
+    chemins_abs = [os.path.abspath(c) for c in liste_chemins]
+
+    with tempfile.TemporaryDirectory() as tmp:
+        # Étape 1 : aligner les images si align_image_stack est disponible
+        images_a_fusionner = chemins_abs
+        if shutil.which("align_image_stack"):
+            print("[enfuse] Alignement avec align_image_stack...")
+            pattern_aligne = os.path.join(tmp, "aligned_%04d.tif")
+            r_align = subprocess.run(
+                ["align_image_stack", "-m", "-a", pattern_aligne] + chemins_abs,
+                capture_output=True, text=True, timeout=120
+            )
+            # Récupérer les fichiers alignés produits
+            alignes = sorted([
+                os.path.join(tmp, f)
+                for f in os.listdir(tmp)
+                if f.startswith("aligned_") and f.endswith(".tif")
+            ])
+            if alignes:
+                images_a_fusionner = alignes
+                print(f"[enfuse] {len(alignes)} images alignées.")
+
+        # Étape 2 : fusionner avec enfuse
+        sortie_abs = os.path.abspath(chemin_sortie)
+        print(f"[enfuse] Fusion -> {sortie_abs}")
+        r = subprocess.run(
+            ["enfuse",
+             "--exposure-weight=0",   # pas de pondération exposition (focus stack)
+             "--saturation-weight=0", # pas de pondération saturation
+             "--contrast-weight=1",   # pondération uniquement sur le contraste (netteté)
+             "--contrast-window-size=5",
+             f"--output={sortie_abs}"] + images_a_fusionner,
+            capture_output=True, text=True, timeout=120
+        )
+
+        if os.path.exists(sortie_abs) and os.path.getsize(sortie_abs) > 0:
+            taille = os.path.getsize(sortie_abs) // 1024
+            print(f"[enfuse] Succès ({taille} Ko) -> {sortie_abs}")
+            return sortie_abs
+
+        print(f"[enfuse] Échec (code {r.returncode}).")
+        if r.stderr:
+            print(f"[enfuse] {r.stderr[:300]}")
+        return None
+
+
+# ==============================================================================
+# MÉTHODE 2 : AlignMTB + Mertens (OpenCV) — fallback universel
+# ==============================================================================
+
+def _charger_images(liste_chemins):
     images = []
     for chemin in liste_chemins:
-        # os.path.abspath convertit le chemin relatif en chemin absolu
-        # pour eviter les erreurs de chemin selon d'ou on lance le script
-        chemin_abs = os.path.abspath(chemin)
-        img = cv2.imread(chemin_abs)
+        img = cv2.imread(os.path.abspath(chemin))
         if img is None:
-            print(f"Attention : impossible de charger {chemin_abs}")
-            print("  Verifiez que le fichier existe et que le chemin est correct.")
+            print(f"[Stacking] Impossible de charger : {chemin}")
         else:
             images.append(img)
-    print(f"{len(images)} image(s) chargee(s) sur {len(liste_chemins)} fournie(s).")
+    print(f"[Stacking] {len(images)} image(s) chargée(s).")
     return images
 
 
-def aligner_images(images):
+def _aligner_images(images):
     """
-    Aligne les images entre elles pour corriger les micro-decalages.
-
-    Entre deux prises de vue, meme sur trepied, il peut y avoir de legeres
-    vibrations ou des deplacements dus a la manipulation du focus.
-    AlignMTB (Median Threshold Bitmap) corrige ces decalages rapidement
-    en comparant les niveaux de luminosite des images.
+    AlignMTB : aligne par seuillage médian de luminosité.
+    Corrige les décalages x/y entre images.
     """
     if len(images) < 2:
         return images
     aligneur = cv2.createAlignMTB()
     aligneur.process(images, images)
-    print("Alignement termine.")
+    print("[Stacking] Alignement AlignMTB terminé.")
     return images
 
 
-def fusionner_focus(images):
+def _fusionner_mertens(images):
     """
-    Fusionne les images en selectionnant les zones nettes de chacune.
-
-    L'algorithme de Mertens calcule pour chaque pixel un score de qualite
-    base sur le contraste local (les zones nettes ont un contraste eleve,
-    les zones floues un contraste faible). Il construit ensuite l'image
-    finale en ponderant chaque pixel selon ce score.
-
-    Retourne une image numpy uint8 (valeurs entre 0 et 255).
+    Mertens : fusion par pondération multi-échelle.
+    Score par pixel = contraste local × saturation × exposition.
+    Résultat en float32 (0-1) converti en uint8 (0-255).
     """
     fusionneur = cv2.createMergeMertens()
     resultat_float = fusionneur.process(images)
-    # L'algorithme retourne des valeurs float32 entre 0 et 1.
-    # On les convertit en entiers 0-255 pour sauvegarder en image standard.
     resultat_uint8 = np.clip(resultat_float * 255, 0, 255).astype("uint8")
-    print("Fusion terminee.")
+    print("[Stacking] Fusion Mertens terminée.")
     return resultat_uint8
 
 
-def sauvegarder_resultat(image, chemin_sortie):
-    """
-    Sauvegarde l'image stackee dans le fichier indique.
-    Cree les dossiers intermediaires si necessaire.
-    """
+def _stacking_mertens(liste_chemins, chemin_sortie):
     dossier = os.path.dirname(chemin_sortie)
     if dossier:
         os.makedirs(dossier, exist_ok=True)
-    succes = cv2.imwrite(chemin_sortie, image)
-    if succes:
-        print(f"Image stackee sauvegardee -> {chemin_sortie}")
-    else:
-        print(f"Erreur : impossible de sauvegarder dans {chemin_sortie}")
-    return succes
 
-
-def focus_stacking(liste_chemins, chemin_sortie):
-    """
-    Fonction principale appelee depuis l'interface.
-
-    Parametres :
-        liste_chemins : liste de chemins vers les photos brutes
-        chemin_sortie : chemin du fichier de sortie (.tiff recommande)
-
-    Retourne le chemin de sortie si succes, None sinon.
-
-    Exemple d'appel :
-        focus_stacking(
-            ["images/Canon/scolyte1/individu_01/photo01.jpg",
-             "images/Canon/scolyte1/individu_01/photo02.jpg",
-             "images/Canon/scolyte1/individu_01/photo03.jpg"],
-            "images/Canon/scolyte1/individu_01/scolyte1_ind01_camCanon_mag10x_angleDorsal_STACKEE.tiff"
-        )
-    """
-    if len(liste_chemins) < 2:
-        print("Il faut au moins 2 images pour le focus stacking.")
-        return None
-
-    print(f"\nFocus stacking de {len(liste_chemins)} images...")
-    print("Etape 1/3 : chargement des images")
-    images = charger_images(liste_chemins)
-
+    images = _charger_images(liste_chemins)
     if len(images) < 2:
-        print("Pas assez d'images valides (minimum 2).")
         return None
 
-    print("Etape 2/3 : alignement")
-    images = aligner_images(images)
+    images = _aligner_images(images)
+    resultat = _fusionner_mertens(images)
 
-    print("Etape 3/3 : fusion focus stacking")
-    resultat = fusionner_focus(images)
-
-    if sauvegarder_resultat(resultat, chemin_sortie):
-        print(f"Succes : {chemin_sortie}\n")
+    if cv2.imwrite(chemin_sortie, resultat) and os.path.exists(chemin_sortie):
+        print(f"[Stacking] Sauvegardé ({os.path.getsize(chemin_sortie)//1024} Ko) -> {chemin_sortie}")
         return chemin_sortie
 
+    print(f"[Stacking] Erreur sauvegarde.")
     return None
 
 
-# Test depuis le terminal
-# Usage : python3 traitement/stacking.py photo1.jpg photo2.jpg photo3.jpg sortie.tiff
-#
-# Exemple concret avec vos photos :
-#   python3 traitement/stacking.py \
-#     images/Android/scolyte1/individu_01/scolyte1_ind01_camAndroid_mag10x_angleDorsal_photo01.jpg \
-#     images/Android/scolyte1/individu_01/scolyte1_ind01_camAndroid_mag10x_angleDorsal_photo02.jpg \
-#     images/Android/scolyte1/individu_01/scolyte1_ind01_camAndroid_mag10x_angleDorsal_photo03.jpg \
-#     images/Android/scolyte1/individu_01/scolyte1_STACKEE.tiff
-#
-# Pour voir les vrais noms de vos fichiers :
-#   ls images/Android/scolyte1/individu_01/
+# ==============================================================================
+# TEST DIRECT
+# ==============================================================================
 
 if __name__ == "__main__":
     import sys
-
     if len(sys.argv) < 4:
         print("Usage : python3 traitement/stacking.py photo1 photo2 [photo3...] sortie.tiff")
-        print("")
-        print("Pour voir les fichiers disponibles :")
-        print("  ls images/Android/scolyte1/individu_01/")
         sys.exit(0)
-
     entrees = sys.argv[1:-1]
     sortie  = sys.argv[-1]
     res = focus_stacking(entrees, sortie)
-    if res:
-        print(f"Stacking reussi : {res}")
-    else:
-        print("Stacking echoue.")
+    print(f"\nRésultat : {'Succès — ' + res if res else 'Échec'}")

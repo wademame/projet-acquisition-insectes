@@ -1,9 +1,19 @@
 # acquisition/canon.py
-# Controle du Canon EOS R7
-#
+# Contrôle du Canon EOS R7
 # Linux   : gphoto2 CLI (sudo apt install gphoto2)
-# Windows : digiCamControl CLI (https://digicamcontrol.com/download)
-
+# Windows : digiCamControl CLI (digicamcontrol.com)
+#
+# Problème "Could not claim USB device" :
+#   gvfs-gphoto2 reprend le contrôle du Canon quand plusieurs appareils
+#   USB sont branchés (ex: téléphone + Canon simultanément).
+#   Solution permanente : règle udev qui empêche gvfs de prendre le Canon.
+#   Commande à lancer UNE SEULE FOIS sur le PC :
+#
+#   echo 'ATTRS{idVendor}=="04a9", ATTRS{idProduct}=="32f7", ENV{ID_MEDIA_PLAYER}="1"' \
+#     | sudo tee /etc/udev/rules.d/99-canon-r7.rules
+#   sudo udevadm control --reload-rules && sudo udevadm trigger
+#
+#   Après ça, le Canon n'est plus jamais bloqué par gvfs.
 
 import os
 import sys
@@ -14,18 +24,10 @@ import shutil
 WINDOWS = sys.platform == "win32"
 LINUX   = sys.platform.startswith("linux")
 
-# Chemin vers digiCamControl sur Windows
 DIGICAM_CMD = r"C:\Program Files (x86)\digiCamControl\CameraControlCmd.exe"
-
-# INTERFACE COMMUNE
 
 
 def connecter_canon():
-    """
-    Verifie que le Canon est detecte et accessible.
-    Linux   -> True/False via gphoto2 --auto-detect
-    Windows -> True/False via digiCamControl /capture test
-    """
     if LINUX:
         return _connecter_linux()
     return _connecter_windows()
@@ -33,10 +35,9 @@ def connecter_canon():
 
 def prendre_photo_canon(chemin_fichier):
     """
-    Declenche le Canon et sauvegarde la photo dans chemin_fichier.
-    Linux   -> gphoto2 --capture-image-and-download
-    Windows -> digiCamControl /capture /filename
-    Retourne chemin_fichier si succes, None sinon.
+    Déclenche et récupère la photo.
+    L'extension du fichier produit dépend du réglage de l'appareil
+    (JPG, CR3 RAW...). On retourne le chemin réel du fichier créé.
     """
     if LINUX:
         return _prendre_photo_linux(chemin_fichier)
@@ -44,23 +45,21 @@ def prendre_photo_canon(chemin_fichier):
 
 
 def deconnecter_canon():
-    """Pas de session persistante a fermer sur ces deux methodes."""
     pass
 
 
-
-# LINUX — gphoto2
-
+# ── Linux — gphoto2 ───────────────────────────────────────────────────────────
 
 def _gvfs_libre():
     """
-    Tue gvfs-gphoto2 avant d'utiliser gphoto2.
-    gvfs est un daemon Ubuntu qui prend automatiquement le controle
-    du Canon des qu'il est branche, empechant gphoto2 d'y acceder.
+    Tue gvfs-gphoto2 pour libérer le Canon.
+    sleep 2 (avec un espace) laisse le temps au système de libérer le port USB.
+    Si le problème persiste avec plusieurs appareils branchés, installer
+    la règle udev permanente (voir commentaire en haut du fichier).
     """
     subprocess.run(["pkill", "-9", "-f", "gvfs-gphoto2"],  capture_output=True)
     subprocess.run(["pkill", "-9", "-f", "gvfsd-gphoto2"], capture_output=True)
-    time.sleep(1.5)
+    time.sleep(2)   # 2 secondes — ne pas écrire "sleep2", mettre un espace
 
 
 def _connecter_linux():
@@ -70,45 +69,52 @@ def _connecter_linux():
             ["gphoto2", "--auto-detect"],
             capture_output=True, text=True, timeout=10
         )
-        if "usb:" in r.stdout:
-            print("[Canon Linux] Canon detecte via gphoto2.")
+        if "Canon" in r.stdout or "usb:" in r.stdout:
+            print("[Canon Linux] Détecté via gphoto2.")
             return True
-        print("[Canon Linux] Non detecte. Canon allume + cable USB ?")
+        print("[Canon Linux] Non détecté. Canon allumé + câble USB ?")
         return False
     except FileNotFoundError:
         print("[Canon Linux] gphoto2 absent : sudo apt install gphoto2")
-        return False
-    except subprocess.TimeoutExpired:
-        print("[Canon Linux] Timeout detection.")
         return False
 
 
 def _prendre_photo_linux(chemin_fichier):
     """
     Capture avec gphoto2 --capture-image-and-download.
-    La photo est transferee directement sans carte SD.
+    L'extension du fichier dépend du format réglé sur l'appareil.
+    On cherche le fichier réel après transfert.
     """
     _gvfs_libre()
-    if os.path.dirname(chemin_fichier):
-        os.makedirs(os.path.dirname(chemin_fichier), exist_ok=True)
+    dossier = os.path.dirname(chemin_fichier)
+    if dossier:
+        os.makedirs(dossier, exist_ok=True)
 
-    print(f"[Canon Linux] Declenchement -> {chemin_fichier}")
+    base_sans_ext = os.path.splitext(chemin_fichier)[0]
+
+    print(f"[Canon Linux] gphoto2 -> {chemin_fichier}")
     try:
         r = subprocess.run(
-            [
-                "gphoto2",
-                "--capture-image-and-download",
-                "--filename", chemin_fichier,
-                "--force-overwrite"
-            ],
+            ["gphoto2", "--capture-image-and-download",
+             "--filename", chemin_fichier, "--force-overwrite"],
             capture_output=True, text=True, timeout=30
         )
-        if r.returncode == 0 and os.path.exists(chemin_fichier):
-            taille = os.path.getsize(chemin_fichier) // 1024
-            print(f"[Canon Linux] OK ({taille} Ko) -> {chemin_fichier}")
-            return chemin_fichier
-        print(f"[Canon Linux] ECHEC (code {r.returncode}) : {r.stderr.strip()}")
+
+        if r.returncode == 0:
+            fichier = _trouver_fichier_cree(dossier, base_sans_ext, chemin_fichier)
+            if fichier:
+                print(f"[Canon Linux] OK ({os.path.getsize(fichier)//1024} Ko) -> {fichier}")
+                return fichier
+
+        print(f"[Canon Linux] Échec (code {r.returncode}) : {r.stderr.strip()[:200]}")
+        if "Could not claim" in r.stderr:
+            print("[Canon Linux] Conseil : installez la règle udev permanente.")
+            print("[Canon Linux] Commande (une seule fois) :")
+            print('  echo \'ATTRS{idVendor}=="04a9", ATTRS{idProduct}=="32f7", ENV{ID_MEDIA_PLAYER}="1"\' \\')
+            print("    | sudo tee /etc/udev/rules.d/99-canon-r7.rules")
+            print("  sudo udevadm control --reload-rules && sudo udevadm trigger")
         return None
+
     except subprocess.TimeoutExpired:
         print("[Canon Linux] TIMEOUT 30s.")
         return None
@@ -117,140 +123,91 @@ def _prendre_photo_linux(chemin_fichier):
         return None
 
 
+def _trouver_fichier_cree(dossier, base_sans_ext, chemin_demande):
+    """
+    Cherche le fichier créé par gphoto2 quelle que soit son extension.
+    L'appareil peut produire .cr3 même si on demande .jpg.
+    """
+    if os.path.exists(chemin_demande) and os.path.getsize(chemin_demande) > 0:
+        return chemin_demande
+    nom_base = os.path.basename(base_sans_ext).lower()
+    if os.path.exists(dossier):
+        for f in os.listdir(dossier):
+            if os.path.splitext(f)[0].lower() == nom_base:
+                chemin = os.path.join(dossier, f)
+                if os.path.getsize(chemin) > 0:
+                    return chemin
+    return None
 
-# WINDOWS — digiCamControl
 
+# ── Windows — digiCamControl ──────────────────────────────────────────────────
 
 def _connecter_windows():
-    """
-    Verifie que digiCamControl est installe et detecte le Canon.
-    digiCamControl est un logiciel Windows gratuit qui supporte
-    le controle a distance des appareils photo Canon via USB.
-    Site : https://digicamcontrol.com/download
-    """
     if not os.path.exists(DIGICAM_CMD):
         print(f"[Canon Windows] digiCamControl introuvable : {DIGICAM_CMD}")
-        print("[Canon Windows] Installez-le depuis : https://digicamcontrol.com/download")
+        print("[Canon Windows] Installez-le : https://digicamcontrol.com/download")
         return False
-
-    try:
-        # /list liste les cameras connectees sans declencher
-        r = subprocess.run(
-            [DIGICAM_CMD, "/list"],
-            capture_output=True, text=True, timeout=10
-        )
-        sortie = r.stdout + r.stderr
-        # digiCamControl affiche "Canon EOS" ou "New Camera is connected"
-        if "Canon" in sortie or "Camera" in sortie:
-            print("[Canon Windows] Canon detecte via digiCamControl.")
-            return True
-        # Si /list ne fonctionne pas (certaines versions), on essaie autrement
-        print("[Canon Windows] Canon detecte (digiCamControl present).")
-        return True
-    except subprocess.TimeoutExpired:
-        print("[Canon Windows] Timeout detection.")
-        return False
-    except Exception as e:
-        print(f"[Canon Windows] Erreur detection : {e}")
-        return False
+    print("[Canon Windows] digiCamControl présent.")
+    return True
 
 
 def _prendre_photo_windows(chemin_fichier):
-    """
-    Capture avec digiCamControl /capture /filename.
-
-    digiCamControl declenche le Canon, recupere la photo et la copie
-    dans le fichier indique. La carte SD n'est pas necessaire.
-
-    Fonctionnement de /filename :
-    digiCamControl sauvegarde directement dans le chemin fourni.
-    On cree le dossier si necessaire avant d'appeler la commande.
-    """
     if not os.path.exists(DIGICAM_CMD):
-        print(f"[Canon Windows] digiCamControl introuvable : {DIGICAM_CMD}")
         return None
 
     dossier = os.path.dirname(chemin_fichier)
     if dossier:
         os.makedirs(dossier, exist_ok=True)
 
-    # Chemin absolu obligatoire pour digiCamControl
     chemin_absolu = os.path.abspath(chemin_fichier)
+    base_sans_ext = os.path.splitext(chemin_absolu)[0]
 
-    print(f"[Canon Windows] Declenchement -> {chemin_absolu}")
-
+    print(f"[Canon Windows] digiCamControl -> {chemin_absolu}")
     try:
         r = subprocess.run(
-            [
-                DIGICAM_CMD,
-                "/capture",
-                "/filename", chemin_absolu
-            ],
+            [DIGICAM_CMD, "/capture", "/filename", chemin_absolu],
             capture_output=True, text=True, timeout=30
         )
-
         sortie = r.stdout + r.stderr
 
-        # Verifier si la photo a ete transferee
         if os.path.exists(chemin_absolu) and os.path.getsize(chemin_absolu) > 0:
-            taille = os.path.getsize(chemin_absolu) // 1024
-            print(f"[Canon Windows] OK ({taille} Ko) -> {chemin_absolu}")
+            print(f"[Canon Windows] OK ({os.path.getsize(chemin_absolu)//1024} Ko)")
             return chemin_absolu
 
-        # digiCamControl peut sauvegarder dans son dossier par defaut
-        # Si le fichier n'est pas au bon endroit, chercher la derniere photo transferee
         if "Transfer done" in sortie:
-            # Extraire le chemin depuis la sortie de digiCamControl
-            # Format : "Transfer done :C:\chemin\vers\photo.JPG"
             for ligne in sortie.splitlines():
-                if "Transfer done" in ligne and ":" in ligne:
-                    # Extraire le chemin apres "Transfer done :"
+                if "Transfer done" in ligne:
                     parties = ligne.split("Transfer done :")
                     if len(parties) > 1:
-                        chemin_source = parties[1].strip()
-                        if os.path.exists(chemin_source):
-                            # Copier vers le bon emplacement
-                            shutil.copy2(chemin_source, chemin_absolu)
-                            taille = os.path.getsize(chemin_absolu) // 1024
-                            print(f"[Canon Windows] OK ({taille} Ko) -> {chemin_absolu}")
-                            return chemin_absolu
+                        source = parties[1].strip()
+                        if os.path.exists(source):
+                            ext_source = os.path.splitext(source)[1]
+                            cible = base_sans_ext + ext_source
+                            shutil.copy2(source, cible)
+                            print(f"[Canon Windows] OK ({os.path.getsize(cible)//1024} Ko) -> {cible}")
+                            return cible
 
-        print(f"[Canon Windows] ECHEC.")
-        if sortie:
-            print(f"[Canon Windows] Sortie : {sortie[:300]}")
+        print(f"[Canon Windows] Échec.")
         return None
 
     except subprocess.TimeoutExpired:
-        print("[Canon Windows] TIMEOUT 30s.")
+        print("[Canon Windows] TIMEOUT.")
         return None
     except Exception as e:
         print(f"[Canon Windows] Erreur : {e}")
         return None
 
 
-
-# TEST DIRECT
-
+# ── Test direct ───────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
     print("=" * 50)
     print(f"TEST CANON — {'Windows' if WINDOWS else 'Linux'}")
     print("=" * 50)
-
-    print("\n[1/2] Detection...")
     ok = connecter_canon()
     if not ok:
-        print("ECHEC : Canon non detecte.")
         exit(1)
-    print("Canon detecte.")
-
-    print("\n[2/2] Prise de photo...")
     os.makedirs("images/test", exist_ok=True)
     res = prendre_photo_canon("images/test/canon_test.jpg")
-
-    if res and os.path.exists(res):
-        print(f"\nSUCCES : {res} ({os.path.getsize(res)//1024} Ko)")
-    else:
-        print("\nECHEC : photo non recuperee.")
-
+    print(f"\nRésultat : {res if res else 'Échec'}")
     deconnecter_canon()

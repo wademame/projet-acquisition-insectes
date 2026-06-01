@@ -671,30 +671,193 @@ class InterfaceAcquisition:
         except Exception as e:
             messagebox.showerror(self.t("suppr_err"), f"{self.t('suppr_err')} :\n{e}")
 
+
     def _ouvrir_guide(self):
+        """
+        Ouvre la fenêtre du guide d'utilisation avec mise en forme complète :
+        - Titre centré en gras
+        - Sections en gras
+        - Commandes en police code sur fond sombre
+        - Sommaire cliquable (liens vers les ancres)
+        - Texte justifié
+        """
+        from text import GUIDE_SECTIONS_FR, GUIDE_SECTIONS_EN
+        import re
+
         g = tk.Toplevel(self.fenetre)
         g.title(self.t("guide_titre"))
-        g.geometry("720x640")
+        g.geometry("780x680")
         g.configure(bg=C_BG)
         g.resizable(True, True)
-        tk.Label(g, text=self.t("guide_titre"),
-            font=("Arial", 14, "bold"), fg=C_BARRE, bg=C_BG).pack(pady=(14, 4))
+
+        # En-tête fixe avec le titre
+        entete = tk.Frame(g, bg=C_BARRE, height=50)
+        entete.pack(fill="x")
+        entete.pack_propagate(False)
+        tk.Label(entete, text=self.t("guide_titre"),
+                 font=("Arial", 14, "bold"), fg="white", bg=C_BARRE
+                 ).pack(side="left", padx=16, pady=12)
+
+        # Zone de texte avec scrollbar
         frame_texte = tk.Frame(g, bg=C_BG)
-        frame_texte.pack(fill="both", expand=True, padx=12, pady=(0, 4))
+        frame_texte.pack(fill="both", expand=True, padx=0, pady=(0, 0))
+
         texte = tk.Text(frame_texte,
-            font=("Arial", 10), bg="white", fg="#1A1A1A",
-            wrap="word", padx=14, pady=10, relief="flat",
-            spacing1=2, spacing3=4)
+            font=("Arial", 10),
+            bg="white", fg="#1A1A1A",
+            wrap="word",
+            padx=20, pady=14,
+            relief="flat",
+            spacing1=2, spacing3=5,
+            cursor="arrow")
         sc = tk.Scrollbar(frame_texte, command=texte.yview)
         texte.configure(yscrollcommand=sc.set)
         texte.pack(side="left", fill="both", expand=True)
         sc.pack(side="right", fill="y")
+
+        # Configurer les tags de mise en forme
+        texte.tag_configure("titre",
+            font=("Arial", 16, "bold"),
+            foreground=C_BARRE,
+            justify="center",
+            spacing1=10, spacing3=6)
+
+        texte.tag_configure("sous_titre",
+            font=("Arial", 11, "bold"),
+            foreground=C_BARRE,
+            justify="center",
+            spacing1=4, spacing3=10)
+
+        texte.tag_configure("h1",
+            font=("Arial", 12, "bold"),
+            foreground=C_BARRE,
+            spacing1=14, spacing3=4)
+
+        texte.tag_configure("sous",
+            font=("Arial", 10, "bold"),
+            foreground="#5A4060",
+            spacing1=8, spacing3=2)
+
+        texte.tag_configure("code",
+            font=("Courier", 9),
+            foreground="#F0D8EC",
+            background="#2D1F3A",
+            spacing1=1, spacing3=1,
+            lmargin1=30, lmargin2=30,
+            rmargin=20)
+
+        texte.tag_configure("lien",
+            font=("Arial", 10),
+            foreground="#1A5276",
+            underline=True)
+
+        texte.tag_configure("normal",
+            font=("Arial", 10),
+            foreground="#1A1A1A",
+            justify="left",
+            spacing1=0, spacing3=4,
+            lmargin1=0, lmargin2=0)
+
+        texte.tag_configure("sommaire_lien",
+            font=("Arial", 10),
+            foreground=C_BARRE,
+            underline=False,
+            lmargin1=20, lmargin2=20,
+            spacing1=2, spacing3=2)
+
+        # Stocker les positions des ancres pour le sommaire cliquable
+        ancres = {}
+
+        def inserer_contenu(contenu):
+            """Parse le contenu avec les marqueurs §."""
+            lignes = contenu.split("\n")
+            i = 0
+            while i < len(lignes):
+                ligne = lignes[i]
+
+                if ligne.startswith("§TITRE§") and ligne.endswith("§"):
+                    val = ligne[7:-1]
+                    texte.insert("end", val + "\n", "titre")
+
+                elif ligne.startswith("§SOUS§") and ligne.endswith("§"):
+                    val = ligne[6:-1]
+                    texte.insert("end", val + "\n", "sous")
+
+                elif ligne.startswith("§H1§") and ligne.endswith("§"):
+                    val = ligne[4:-1]
+                    texte.insert("end", val + "\n", "h1")
+
+                elif ligne.startswith("§CODE§"):
+                    val = ligne[6:]
+                    texte.insert("end", "  " + val + "\n", "code")
+
+                elif ligne.startswith("§ANCRE§") and ligne.endswith("§"):
+                    ancre_id = ligne[7:-1]
+                    # Marquer la position de cette ancre
+                    ancres[ancre_id] = texte.index("end")
+
+                elif ligne.startswith("§LIEN§"):
+                    # Format : §LIEN§url_ou_id§label§
+                    parties = ligne[6:].rstrip("§").split("§")
+                    if len(parties) >= 2:
+                        cible = parties[0]
+                        label = parties[1]
+                        tag_nom = f"lien_{cible.replace('.','_').replace('/','_')}"
+                        texte.tag_configure(tag_nom,
+                            font=("Arial", 10),
+                            foreground=C_BARRE,
+                            underline=False,
+                            lmargin1=20, lmargin2=20,
+                            spacing1=2, spacing3=2)
+                        if cible.startswith("http"):
+                            # Lien externe
+                            texte.tag_bind(tag_nom, "<Button-1>",
+                                lambda e, u=cible: _ouvrir_url(u))
+                            texte.tag_configure(tag_nom, foreground="#1A5276",
+                                                underline=True, lmargin1=0)
+                        else:
+                            # Lien vers ancre interne
+                            texte.tag_bind(tag_nom, "<Button-1>",
+                                lambda e, a=cible: _aller_ancre(a))
+                            texte.tag_configure(tag_nom,
+                                foreground=C_BARRE, underline=False,
+                                lmargin1=20, lmargin2=20)
+                        texte.tag_bind(tag_nom, "<Enter>",
+                            lambda e, t=tag_nom: texte.configure(cursor="hand2"))
+                        texte.tag_bind(tag_nom, "<Leave>",
+                            lambda e: texte.configure(cursor="arrow"))
+                        texte.insert("end", "  " + label + "\n", tag_nom)
+                    else:
+                        texte.insert("end", ligne + "\n", "normal")
+
+                elif ligne == "":
+                    texte.insert("end", "\n")
+
+                else:
+                    texte.insert("end", ligne + "\n", "normal")
+
+                i += 1
+
+        def _aller_ancre(ancre_id):
+            """Fait défiler vers l'ancre correspondante."""
+            if ancre_id in ancres:
+                texte.see(ancres[ancre_id])
+
+        def _ouvrir_url(url):
+            """Ouvre un lien dans le navigateur."""
+            import webbrowser
+            webbrowser.open(url)
+
         contenu = GUIDE_FR if self.langue == "FR" else GUIDE_EN
-        texte.insert("1.0", contenu.strip())
+        inserer_contenu(contenu)
         texte.configure(state="disabled")
+
+        # Bouton Fermer en bas
         tk.Button(g, text=self.t("fermer"),
             font=("Arial", 10), bg=C_BARRE, fg="white",
-            relief="flat", padx=14, command=g.destroy).pack(pady=(0, 12))
+            relief="flat", padx=20, pady=6,
+            command=g.destroy
+            ).pack(pady=(6, 12))
 
 
 if __name__ == "__main__":
