@@ -268,6 +268,16 @@ Smartphone Android :
   suivez cette documentation https://developer.android.com/studio/debug/dev-options?hl=fr ou https://www.embarcadero.com/starthere/xe5/mobdevsetup/android/fr/enabling_usb_debugging_on_an_android_device.html 
   qui vous guidera selon votre version et modèle d'android.
 
+
+
+
+  cd ~ wget
+https://dl.google.com/android/repository/platform-tools-latest-linux.zip
+unzip platform-tools-latest-linux.zip echo 'export
+PATH="$HOME/platform-tools:$PATH"' >> ~/.bashrc source ~/.bashrc adb
+--version
+Doit afficher : Android Debug Bridge version 1.0.41
+
 """
 
 GUIDE_EN = """
