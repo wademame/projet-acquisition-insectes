@@ -49,11 +49,14 @@ class InterfaceAcquisition:
         self.photo_tk           = None
         self.chemins_session    = []
 
-        # Attributs prévisualisation — initialisés AVANT mainloop()
         self._preview_active   = False
         self._preview_cap      = None
         self._photo_preview_tk = None
         self._preview_job      = None
+
+        # Compteur d'échecs consécutifs de détection Jeulin
+        # Évite de marquer "non branché" sur un simple raté de lecture
+        self._jeulin_echecs    = 0
 
         self._construire_interface()
         threading.Thread(target=self._verifier_tous, daemon=True).start()
@@ -97,7 +100,6 @@ class InterfaceAcquisition:
     def _construire_gauche(self, parent):
         self._section_metadonnees(parent)
         self._section_connexion(parent)
-        # Prévisualisation AVANT les boutons de déclenchement
         self._section_preview_jeulin(parent)
         self._section_declenchement(parent)
         self._section_journal(parent)
@@ -164,35 +166,19 @@ class InterfaceAcquisition:
             self.statuts[cle] = lbl_statut
 
     def _section_preview_jeulin(self, parent):
-        """
-        Aperçu vidéo en direct — placé AVANT les boutons de déclenchement.
-        Grande taille pour bien voir le sujet avant de déclencher.
-
-        Technique pour minimiser le délai :
-        - after(16, ...) = 60 fps théoriques dans le thread principal
-        - CAP_PROP_BUFFERSIZE=1 pour éviter les frames en retard
-        - On vide le buffer au démarrage en lisant 5 frames sans afficher
-        - Image.NEAREST (plus rapide que LANCZOS) pour le redimensionnement
-        """
         self.frame_preview = tk.LabelFrame(parent,
             text="Caméra Jeulin — aperçu en direct",
             font=("Arial", 10, "bold"), fg=C_JEULIN_FG,
             bg=C_FRAME_BG, padx=2, pady=2)
         self.frame_preview.pack(fill="x", pady=(0, 8))
-
-        # Dimensions grandes pour bien voir le sujet
         self.frame_preview_inner = tk.Frame(
-            self.frame_preview,
-            bg="#1A1A1A",
-            width=620, height=290)
+            self.frame_preview, bg="#1A1A1A", width=620, height=290)
         self.frame_preview_inner.pack(fill="x", padx=2, pady=2)
         self.frame_preview_inner.pack_propagate(False)
-
         self.label_preview = tk.Label(
             self.frame_preview_inner,
             text="Jeulin non détectée.\nBranchez la caméra et actualisez la détection.",
-            bg="#1A1A1A", fg="#888888",
-            font=("Arial", 10, "italic"))
+            bg="#1A1A1A", fg="#888888", font=("Arial", 10, "italic"))
         self.label_preview.place(relx=0.5, rely=0.5, anchor="center")
 
     def _section_declenchement(self, parent):
@@ -210,21 +196,18 @@ class InterfaceAcquisition:
         ligne_btns.columnconfigure(0, weight=1)
         ligne_btns.columnconfigure(1, weight=1)
         ligne_btns.columnconfigure(2, weight=1)
-        self.btn_canon = tk.Button(ligne_btns,
-            text=self.t("btn_canon"),
+        self.btn_canon = tk.Button(ligne_btns, text=self.t("btn_canon"),
             bg=C_CANON, fg="white", activebackground=C_BARRE,
             font=("Arial", 11, "bold"), relief="flat", height=2, cursor="hand2",
             command=lambda: self._declencher_un("Canon"))
         self.btn_canon.grid(row=0, column=0, padx=6, sticky="ew")
-        self.btn_jeulin = tk.Button(ligne_btns,
-            text=self.t("btn_jeulin"),
+        self.btn_jeulin = tk.Button(ligne_btns, text=self.t("btn_jeulin"),
             bg=C_JEULIN_BG, fg=C_JEULIN_FG, activebackground="#F0E0EC",
             highlightbackground=C_BARRE, highlightthickness=2,
             font=("Arial", 11, "bold"), relief="solid", bd=2, height=2, cursor="hand2",
             command=lambda: self._declencher_un("Jeulin"))
         self.btn_jeulin.grid(row=0, column=1, padx=6, sticky="ew")
-        self.btn_android = tk.Button(ligne_btns,
-            text=self.t("btn_android"),
+        self.btn_android = tk.Button(ligne_btns, text=self.t("btn_android"),
             bg=C_ANDROID, fg="white", activebackground=C_BARRE,
             font=("Arial", 11, "bold"), relief="flat", height=2, cursor="hand2",
             command=lambda: self._declencher_un("Android"))
@@ -246,16 +229,14 @@ class InterfaceAcquisition:
         self.zone_log.configure(yscrollcommand=sc.set)
         self.zone_log.pack(side="left", fill="both", expand=True)
         sc.pack(side="right", fill="y")
-        self.btn_effacer = tk.Button(parent,
-            text=self.t("effacer"),
+        self.btn_effacer = tk.Button(parent, text=self.t("effacer"),
             font=("Arial", 9), bg="#E7D4D6", fg="black",
             relief="flat", padx=6, command=self._effacer_journal)
         self.btn_effacer.pack(anchor="e", pady=(4, 0))
         self.log(self.t("demarrage"))
 
     def _construire_droite(self, parent):
-        self.lbl_photo_titre = tk.Label(parent,
-            text=self.t("photo_titre"),
+        self.lbl_photo_titre = tk.Label(parent, text=self.t("photo_titre"),
             font=("Arial", 11, "bold"), fg=C_GRIS_TEXTE, bg=C_BG)
         self.lbl_photo_titre.pack(pady=(0, 4))
         self.frame_apercu = tk.Frame(parent,
@@ -268,30 +249,30 @@ class InterfaceAcquisition:
             font=("Arial", 10, "italic"), cursor="hand2")
         self.label_apercu.pack(expand=True)
         self.label_apercu.bind("<Button-1>", self._agrandir_photo)
-        self.lbl_indication = tk.Label(parent,
-            text=self.t("cliquer_agrandir"),
+        self.lbl_indication = tk.Label(parent, text=self.t("cliquer_agrandir"),
             bg=C_BG, fg="#999", font=("Arial", 8, "italic"))
         self.lbl_indication.pack(pady=(2, 0))
         self.label_nom_photo = tk.Label(parent, text="",
             bg=C_BG, fg=C_GRIS_TEXTE,
             font=("Courier", 8), wraplength=310, justify="left")
         self.label_nom_photo.pack(pady=4, anchor="w")
-        self.btn_supprimer = tk.Button(parent,
-            text=self.t("supprimer"),
+
+        # Bouton supprimer la photo affichée dans l'aperçu
+        self.btn_supprimer = tk.Button(parent, text=self.t("supprimer"),
             font=("Arial", 10), bg="#E7D4D6", fg="black",
             relief="flat", state="disabled",
-            command=self._supprimer_derniere_photo)
+            command=self._supprimer_photo_apercu)
         self.btn_supprimer.pack(fill="x", pady=2)
+
         tk.Frame(parent, bg="#CCCCCC", height=1).pack(fill="x", pady=(12, 6))
-        self.lbl_session = tk.Label(parent,
-            text=self.t("session_titre"),
+        self.lbl_session = tk.Label(parent, text=self.t("session_titre"),
             font=("Arial", 10, "bold"), fg=C_GRIS_TEXTE, bg=C_BG)
         self.lbl_session.pack(anchor="w")
-        self.lbl_session_note = tk.Label(parent,
-            text=self.t("session_note"),
+        self.lbl_session_note = tk.Label(parent, text=self.t("session_note"),
             bg=C_BG, fg="#666666",
             font=("Arial", 9), wraplength=300, justify="left")
         self.lbl_session_note.pack(anchor="w", pady=(2, 6))
+
         frame_liste = tk.Frame(parent, bg=C_BG)
         frame_liste.pack(fill="both", expand=True)
         self.liste_photos = tk.Listbox(frame_liste,
@@ -304,12 +285,19 @@ class InterfaceAcquisition:
         self.liste_photos.pack(side="left", fill="both", expand=True)
         sc_liste.pack(side="right", fill="y")
         self.liste_photos.bind("<<ListboxSelect>>", self._afficher_photo_selectionnee)
-        self.btn_stack = tk.Button(parent,
-            text=self.t("btn_stack"),
+
+        # Bouton supprimer la sélection (Ctrl+clic = plusieurs photos)
+        self.btn_supprimer_selection = tk.Button(parent,
+            text="Supprimer la sélection",
+            font=("Arial", 9), bg="#E7D4D6", fg="black",
+            relief="flat", command=self._supprimer_photos_selectionnees)
+        self.btn_supprimer_selection.pack(fill="x", pady=(2, 4))
+
+        self.btn_stack = tk.Button(parent, text=self.t("btn_stack"),
             font=("Arial", 10, "bold"), bg=C_STACK_BG, fg="white",
             relief="flat", cursor="hand2", pady=6,
             command=self._lancer_stacking)
-        self.btn_stack.pack(fill="x", pady=(8, 0))
+        self.btn_stack.pack(fill="x", pady=(4, 0))
         self.lbl_stack_statut = tk.Label(parent,
             text="", bg=C_BG, fg=C_GRIS_TEXTE,
             font=("Arial", 9, "italic"), wraplength=300)
@@ -401,6 +389,11 @@ class InterfaceAcquisition:
             self.fenetre.after(0, lambda err=e: self.log(f"{self.t('canon_err')} : {err}"))
 
     def _verifier_jeulin(self):
+        """
+        Détecte la Jeulin. Pour éviter les faux négatifs (détection ratée
+        alors que la caméra est branchée), on n'efface le statut que si
+        3 tentatives consécutives échouent. Ça évite le "non branché" aléatoire.
+        """
         try:
             import cv2
             index_trouve = None
@@ -424,27 +417,45 @@ class InterfaceAcquisition:
                                 pass
             except Exception:
                 pass
+
+            # Si v4l2-ctl n'a pas trouvé, essayer par index
             if index_trouve is None:
                 debut = 1 if LINUX else 0
                 for i in range(debut, 6):
                     cap = cv2.VideoCapture(i)
                     if cap.isOpened():
+                        # Vérifier que c'est une vraie caméra en lisant une frame
+                        ok_read, _ = cap.read()
                         cap.release()
-                        index_trouve = i
-                        break
-                    cap.release()
+                        if ok_read:
+                            index_trouve = i
+                            break
+                    else:
+                        cap.release()
+
             if index_trouve is not None:
+                self._jeulin_echecs = 0
                 self.index_jeulin = index_trouve
                 self.fenetre.after(0, lambda idx=index_trouve: self.statuts["Jeulin"].configure(
                     text=f"Connectée (index {idx})", fg=C_VERT))
                 self.fenetre.after(0, lambda idx=index_trouve: self.log(
                     f"{self.t('jeulin_ok')} {idx}."))
-                self.fenetre.after(700, self._demarrer_preview)
+                # Redémarrer la preview seulement si elle n'est pas déjà active
+                if not self._preview_active:
+                    self.fenetre.after(700, self._demarrer_preview)
             else:
-                self.index_jeulin = None
-                self.fenetre.after(0, lambda: self.statuts["Jeulin"].configure(
-                    text=self.t("non_branche"), fg=C_ORANGE))
-                self.fenetre.after(0, lambda: self.log(self.t("jeulin_non")))
+                self._jeulin_echecs += 1
+                # N'afficher "non branché" qu'après 3 échecs consécutifs
+                # pour éviter les faux négatifs lors d'une actualisation
+                if self._jeulin_echecs >= 3:
+                    self.index_jeulin = None
+                    self.fenetre.after(0, lambda: self.statuts["Jeulin"].configure(
+                        text=self.t("non_branche"), fg=C_ORANGE))
+                    self.fenetre.after(0, lambda: self.log(self.t("jeulin_non")))
+                else:
+                    self.fenetre.after(0, lambda: self.log(
+                        "Jeulin : détection incertaine, réessayez."))
+
         except Exception as e:
             self.fenetre.after(0, lambda err=e: self.log(f"{self.t('jeulin_err')} : {err}"))
 
@@ -483,45 +494,25 @@ class InterfaceAcquisition:
     # Prévisualisation Jeulin
 
     def _demarrer_preview(self):
-        """
-        Ouvre la caméra et démarre la boucle temps réel.
-        On vide le buffer interne en lisant 5 frames sans les afficher
-        pour éliminer les frames en retard accumulées.
-        """
         if self.index_jeulin is None or self._preview_active:
             return
-
         import cv2
         cap = cv2.VideoCapture(self.index_jeulin)
         if not cap.isOpened():
-            self.log("Prévisualisation Jeulin : impossible d'ouvrir la caméra.")
             return
-
         cap.set(cv2.CAP_PROP_FRAME_WIDTH,  640)
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
         cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-
-        # Vider le buffer interne du driver V4L2 :
-        # les premières frames sont souvent des frames anciennes mises en cache.
-        # On en lit 5 sans afficher pour arriver à une frame fraîche.
         for _ in range(5):
             cap.read()
-
         self._preview_cap    = cap
         self._preview_active = True
         self._tick_preview()
 
     def _tick_preview(self):
-        """
-        Boucle de prévisualisation dans le thread principal via after(16, ...).
-        16ms = 60 fps théoriques.
-        Image.NEAREST est 3x plus rapide que LANCZOS pour le redimensionnement.
-        """
         if not self._preview_active or self._preview_cap is None:
             return
-
         import cv2
-
         ok, frame = self._preview_cap.read()
         if ok:
             frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
@@ -531,12 +522,10 @@ class InterfaceAcquisition:
             self._photo_preview_tk = photo
             self.label_preview.configure(image=photo, text="", bg="#1A1A1A")
             self.label_preview.place(relx=0.5, rely=0.5, anchor="center")
-
         if self._preview_active:
             self._preview_job = self.fenetre.after(16, self._tick_preview)
 
     def _arreter_preview(self):
-        """Arrête la prévisualisation et libère la caméra."""
         self._preview_active = False
         if self._preview_job is not None:
             self.fenetre.after_cancel(self._preview_job)
@@ -547,6 +536,24 @@ class InterfaceAcquisition:
         self._photo_preview_tk = None
         self.label_preview.configure(
             image="", text="Prévisualisation arrêtée.", bg="#1A1A1A", fg="#888888")
+
+    # Nommage stackée avec incrémentation
+
+    def _prochain_nom_stackee(self, dossier, base):
+        """
+        Génère un nom unique pour le fichier stacké.
+        Si base_STACKEE.tiff existe, essaie base_STACKEE_02.tiff, _03.tiff...
+        Évite d'écraser un fichier stacké existant.
+        """
+        chemin = os.path.join(dossier, f"{base}_STACKEE.tiff")
+        if not os.path.exists(chemin):
+            return f"{base}_STACKEE.tiff"
+        n = 2
+        while True:
+            nom = f"{base}_STACKEE_{n:02d}.tiff"
+            if not os.path.exists(os.path.join(dossier, nom)):
+                return nom
+            n += 1
 
     # Déclenchement
 
@@ -599,6 +606,13 @@ class InterfaceAcquisition:
                 try:
                     from acquisition.canon import prendre_photo_canon
                     resultat = prendre_photo_canon(chemin)
+                    if resultat is None:
+                        # Détecter si l'erreur vient de l'AF avec téléphone branché
+                        if self.android_disponible:
+                            self.fenetre.after(0, lambda: self.log(
+                                "Échec Canon. Si l'objectif est en mode AF, "
+                                "passez-le en MF (interrupteur sur l'objectif). "
+                                "Le téléphone branché peut perturber la capture."))
                 except Exception as e:
                     self.fenetre.after(0, lambda err=e: self.log(f"{self.t('canon_err')} : {err}"))
             else:
@@ -655,10 +669,12 @@ class InterfaceAcquisition:
         if len(chemins) < 2:
             self.log(self.t("stack_chemins_introuvables"))
             return
-        premier       = os.path.basename(chemins[0])
-        base          = premier.rsplit("_photo", 1)[0] if "_photo" in premier else os.path.splitext(premier)[0]
-        nom_sortie    = f"{base}_STACKEE.tiff"
-        chemin_sortie = os.path.join(os.path.dirname(chemins[0]), nom_sortie)
+        premier  = os.path.basename(chemins[0])
+        base     = premier.rsplit("_photo", 1)[0] if "_photo" in premier else os.path.splitext(premier)[0]
+        dossier  = os.path.dirname(chemins[0])
+        # Nom unique pour le stacké — incrémenté si déjà existant
+        nom_sortie    = self._prochain_nom_stackee(dossier, base)
+        chemin_sortie = os.path.join(dossier, nom_sortie)
         self.log(f"{self.t('stack_debut')} {len(chemins)} {self.t('stack_images')} -> {nom_sortie}")
         self.lbl_stack_statut.configure(text=self.t("stack_en_cours"), fg=C_ORANGE)
         self.btn_stack.configure(state="disabled")
@@ -749,31 +765,72 @@ class InterfaceAcquisition:
             tk.Label(fen, text=f"Impossible d'ouvrir l'image :\n{e}",
                 fg="white", bg="black", font=("Arial", 11)).pack(padx=20, pady=20)
 
-    def _supprimer_derniere_photo(self):
+    def _supprimer_photo_apercu(self):
+        """Supprime la photo actuellement affichée dans l'aperçu."""
         if not self.derniere_photo:
             return
-        nom = os.path.basename(self.derniere_photo)
-        if not messagebox.askyesno(
-                self.t("confirmer_titre"),
-                f"{self.t('confirmer_msg')}\n\n{nom}"):
+        self._supprimer_fichiers([self.derniere_photo])
+
+    def _supprimer_photos_selectionnees(self):
+        """
+        Supprime toutes les photos sélectionnées dans la liste (Ctrl+clic).
+        Demande confirmation avant de supprimer.
+        """
+        selection = self.liste_photos.curselection()
+        if not selection:
+            self.log("Aucune photo sélectionnée.")
             return
-        try:
-            if os.path.exists(self.derniere_photo):
-                os.remove(self.derniere_photo)
-                self.log(f"{self.t('suppr_log')} : {nom}")
-            for i in range(self.liste_photos.size()):
-                if self.liste_photos.get(i) == nom:
-                    self.liste_photos.delete(i)
+        noms = [self.liste_photos.get(i) for i in selection]
+        chemins = []
+        for nom in noms:
+            for c in self.chemins_session:
+                if os.path.basename(c) == nom:
+                    chemins.append(c)
                     break
-            self.chemins_session = [
-                c for c in self.chemins_session if os.path.basename(c) != nom
-            ]
+        if not chemins:
+            return
+        if len(chemins) == 1:
+            msg = f"Supprimer cette photo ?\n\n{noms[0]}"
+        else:
+            msg = f"Supprimer ces {len(chemins)} photos ?\n\n" + "\n".join(noms[:5])
+            if len(noms) > 5:
+                msg += f"\n... et {len(noms)-5} autre(s)"
+        if not messagebox.askyesno("Confirmer la suppression", msg):
+            return
+        self._supprimer_fichiers(chemins)
+
+    def _supprimer_fichiers(self, chemins):
+        """Supprime une liste de fichiers et met à jour l'interface."""
+        supprimes = []
+        for chemin in chemins:
+            try:
+                if os.path.exists(chemin):
+                    os.remove(chemin)
+                    supprimes.append(chemin)
+            except Exception as e:
+                self.log(f"Impossible de supprimer {os.path.basename(chemin)} : {e}")
+
+        if not supprimes:
+            return
+
+        noms_supprimes = {os.path.basename(c) for c in supprimes}
+        self.chemins_session = [
+            c for c in self.chemins_session if os.path.basename(c) not in noms_supprimes
+        ]
+
+        # Mettre à jour la liste
+        for i in range(self.liste_photos.size() - 1, -1, -1):
+            if self.liste_photos.get(i) in noms_supprimes:
+                self.liste_photos.delete(i)
+
+        # Réinitialiser l'aperçu si la photo affichée a été supprimée
+        if self.derniere_photo and os.path.basename(self.derniere_photo) in noms_supprimes:
             self.derniere_photo = None
             self.label_apercu.configure(image="", text="Photo supprimée.", bg="#E4E4E4")
             self.label_nom_photo.configure(text="")
             self.btn_supprimer.configure(state="disabled")
-        except Exception as e:
-            messagebox.showerror(self.t("suppr_err"), f"{self.t('suppr_err')} :\n{e}")
+
+        self.log(f"{len(supprimes)} photo(s) supprimée(s).")
 
     def _ouvrir_guide(self):
         import webbrowser
