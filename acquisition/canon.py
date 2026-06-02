@@ -4,14 +4,10 @@
 # Windows : digiCamControl CLI
 #
 # Problème "Could not claim USB device" avec téléphone branché :
-# ADB (Android Debug Bridge) lance un daemon qui scanne tous les appareils USB,
-# y compris le Canon. gvfs fait pareil. Les deux bloquent gphoto2.
+# Plusieurs processus se disputent le Canon : gvfs-gphoto2, gvfsd-mtp, adb server.
+# On les tue tous avant chaque capture.
 #
-# Solution appliquée dans ce fichier :
-# Avant chaque capture Canon, on tue le daemon ADB et gvfs.
-# Après la capture, on redémarre ADB pour que l'Android reste disponible.
-#
-# Règle udev permanente à lancer UNE SEULE FOIS sur le PC (Linux Mint / Ubuntu) :
+# Règle udev permanente à lancer UNE SEULE FOIS sur le PC :
 #
 #   sudo tee /etc/udev/rules.d/99-canon-r7.rules << 'EOF'
 #   ATTRS{idVendor}=="04a9", ATTRS{idProduct}=="32f7", ENV{ID_MEDIA_PLAYER}="1"
@@ -20,8 +16,8 @@
 #   sudo udevadm control --reload-rules
 #   sudo udevadm trigger
 #
-# Après ça, gvfs ignore le Canon. ADB est toujours tué avant chaque capture
-# mais redémarre automatiquement pour l'Android.
+# Débrancher le téléphone pendant la capture du Canon reste la solution
+# la plus fiable si le conflit persiste.
 
 import os
 import sys
@@ -42,6 +38,11 @@ def connecter_canon():
 
 
 def prendre_photo_canon(chemin_fichier):
+    """
+    Déclenche et récupère la photo.
+    L'extension dépend du format réglé sur l'appareil (JPG, CR3...).
+    Retourne le chemin réel du fichier créé.
+    """
     if LINUX:
         return _prendre_photo_linux(chemin_fichier)
     return _prendre_photo_windows(chemin_fichier)
@@ -53,15 +54,15 @@ def deconnecter_canon():
 
 def _liberer_usb_canon():
     """
-    Libère le port USB du Canon en tuant tous les processus qui pourraient
-    le bloquer : gvfs-gphoto2 et le daemon ADB.
+    Tue tous les processus qui peuvent bloquer le Canon sur le port USB :
+    gvfs-gphoto2, gvfsd-gphoto2, gvfsd-mtp (gestionnaire MTP du téléphone),
+    et le daemon ADB.
 
-    ADB est redémarré après la capture par l'interface si l'Android est branché.
     sleep 2 laisse le temps au système de libérer l'interface USB.
-    Note : écrire "sleep 2" avec un espace — "sleep2" est une erreur courante.
+    Note : "sleep 2" avec un espace — "sleep2" est une erreur fréquente.
     """
-    subprocess.run(["pkill", "-9", "-f", "gvfs-gphoto2"],  capture_output=True)
-    subprocess.run(["pkill", "-9", "-f", "gvfsd-gphoto2"], capture_output=True)
+    for processus in ["gvfs-gphoto2", "gvfsd-gphoto2", "gvfsd-mtp"]:
+        subprocess.run(["pkill", "-9", "-f", processus], capture_output=True)
     subprocess.run(["adb", "kill-server"], capture_output=True)
     time.sleep(2)
 
@@ -103,8 +104,8 @@ def _prendre_photo_linux(chemin_fichier):
                 return fichier
         print(f"[Canon Linux] Échec (code {r.returncode}) : {r.stderr.strip()[:200]}")
         if "Could not claim" in r.stderr:
-            print("[Canon Linux] Un processus bloque encore le Canon.")
-            print("[Canon Linux] Essayez de débrancher puis rebrancher le Canon.")
+            print("[Canon Linux] Conseil : débrandez le téléphone pendant la capture Canon.")
+            print("[Canon Linux] Ou installez la règle udev (voir haut de ce fichier).")
         return None
     except subprocess.TimeoutExpired:
         print("[Canon Linux] TIMEOUT 30s.")
@@ -115,10 +116,6 @@ def _prendre_photo_linux(chemin_fichier):
 
 
 def _trouver_fichier_cree(dossier, base_sans_ext, chemin_demande):
-    """
-    Cherche le fichier créé par gphoto2 quelle que soit son extension.
-    L'appareil peut produire .cr3 même si on demande .jpg (format RAW).
-    """
     if os.path.exists(chemin_demande) and os.path.getsize(chemin_demande) > 0:
         return chemin_demande
     nom_base = os.path.basename(base_sans_ext).lower()
