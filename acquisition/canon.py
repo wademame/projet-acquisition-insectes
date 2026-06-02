@@ -1,23 +1,14 @@
 # acquisition/canon.py
-# Contrôle du Canon EOS R7
-# Linux   : gphoto2 CLI
-# Windows : digiCamControl CLI
+# Contrôle du Canon EOS R7 via gphoto2 (Linux) ou digiCamControl (Windows).
 #
-# Problème "Could not claim USB device" avec téléphone branché :
-# Plusieurs processus se disputent le Canon : gvfs-gphoto2, gvfsd-mtp, adb server.
-# On les tue tous avant chaque capture.
+# Problème résolu : quand plusieurs appareils sont branchés (téléphone + Canon),
+# gphoto2 sans --port prend le premier appareil détecté — souvent le téléphone.
+# Solution : détecter le port USB du Canon dans la liste gphoto2 et le passer
+# explicitement avec --port usb:XXX,YYY à chaque commande.
 #
-# Règle udev permanente à lancer UNE SEULE FOIS sur le PC :
-#
-#   sudo tee /etc/udev/rules.d/99-canon-r7.rules << 'EOF'
-#   ATTRS{idVendor}=="04a9", ATTRS{idProduct}=="32f7", ENV{ID_MEDIA_PLAYER}="1"
-#   ATTRS{idVendor}=="04a9", ATTRS{idProduct}=="32f7", ENV{MTP_NO_PROBE}="1"
-#   EOF
-#   sudo udevadm control --reload-rules
-#   sudo udevadm trigger
-#
-# Débrancher le téléphone pendant la capture du Canon reste la solution
-# la plus fiable si le conflit persiste.
+# Autofocus : si l'objectif est en mode AF (autofocus), gphoto2 retourne
+# l'erreur 0x2019 "PTP Device Busy". Il faut passer l'objectif en MF (Manuel).
+# Ce réglage se fait sur l'objectif lui-même (interrupteur AF/MF).
 
 import os
 import sys
@@ -30,6 +21,9 @@ LINUX   = sys.platform.startswith("linux")
 
 DIGICAM_CMD = r"C:\Program Files (x86)\digiCamControl\CameraControlCmd.exe"
 
+# Port USB du Canon, mis à jour à chaque détection
+_port_canon = None
+
 
 def connecter_canon():
     if LINUX:
@@ -38,11 +32,6 @@ def connecter_canon():
 
 
 def prendre_photo_canon(chemin_fichier):
-    """
-    Déclenche et récupère la photo.
-    L'extension dépend du format réglé sur l'appareil (JPG, CR3...).
-    Retourne le chemin réel du fichier créé.
-    """
     if LINUX:
         return _prendre_photo_linux(chemin_fichier)
     return _prendre_photo_windows(chemin_fichier)
@@ -52,32 +41,70 @@ def deconnecter_canon():
     pass
 
 
-def _liberer_usb_canon():
+def _liberer_gvfs():
     """
-    Tue tous les processus qui peuvent bloquer le Canon sur le port USB :
-    gvfs-gphoto2, gvfsd-gphoto2, gvfsd-mtp (gestionnaire MTP du téléphone),
-    et le daemon ADB.
-
-    sleep 2 laisse le temps au système de libérer l'interface USB.
-    Note : "sleep 2" avec un espace — "sleep2" est une erreur fréquente.
+    Tue gvfs-gphoto2 et gvfsd-mtp qui bloquent l'accès au Canon.
+    ADB n'est pas tué ici pour ne pas couper la connexion Android.
+    sleep 2 laisse le temps au système de libérer le port USB.
     """
-    for processus in ["gvfs-gphoto2", "gvfsd-gphoto2", "gvfsd-mtp"]:
-        subprocess.run(["pkill", "-9", "-f", processus], capture_output=True)
-    subprocess.run(["adb", "kill-server"], capture_output=True)
+    subprocess.run(["pkill", "-9", "-f", "gvfs-gphoto2"],  capture_output=True)
+    subprocess.run(["pkill", "-9", "-f", "gvfsd-gphoto2"], capture_output=True)
+    subprocess.run(["pkill", "-9", "-f", "gvfsd-mtp"],     capture_output=True)
     time.sleep(2)
 
 
-def _connecter_linux():
-    _liberer_usb_canon()
+def _detecter_port_canon():
+    """
+    Cherche le port USB du Canon dans la liste gphoto2 --auto-detect.
+    Retourne le port sous forme "usb:004,030" ou None si non trouvé.
+
+    Pourquoi c'est nécessaire :
+    Quand le téléphone ET le Canon sont branchés, gphoto2 liste deux appareils.
+    Sans --port, gphoto2 prend le premier — souvent le téléphone.
+    On cherche explicitement la ligne qui contient "Canon" pour avoir son port.
+
+    Exemple de sortie de gphoto2 --auto-detect :
+        Oppo Find 7 (ID 1)    usb:004,032
+        Canon EOS R7          usb:004,034
+    On récupère "usb:004,034".
+    """
     try:
         r = subprocess.run(
             ["gphoto2", "--auto-detect"],
             capture_output=True, text=True, timeout=10
         )
-        if "Canon" in r.stdout or "usb:" in r.stdout:
-            print("[Canon Linux] Détecté via gphoto2.")
+        for ligne in r.stdout.splitlines():
+            if "Canon" in ligne or "canon" in ligne.lower():
+                # La ligne est du type "Canon EOS R7     usb:004,034"
+                # Le port est le dernier mot de la ligne
+                parties = ligne.split()
+                for p in reversed(parties):
+                    if p.startswith("usb:"):
+                        return p
+    except Exception:
+        pass
+    return None
+
+
+def _connecter_linux():
+    global _port_canon
+    _liberer_gvfs()
+    try:
+        port = _detecter_port_canon()
+        if port:
+            _port_canon = port
+            print(f"[Canon Linux] Détecté sur le port {port}.")
             return True
-        print("[Canon Linux] Non détecté. Canon allumé + câble USB ?")
+        # Vérifier s'il y a au moins un appareil avec gphoto2
+        r = subprocess.run(
+            ["gphoto2", "--auto-detect"],
+            capture_output=True, text=True, timeout=10
+        )
+        if "usb:" in r.stdout:
+            print("[Canon Linux] Appareil détecté mais pas identifié comme Canon.")
+            print(f"[Canon Linux] Liste : {r.stdout.strip()}")
+        else:
+            print("[Canon Linux] Aucun appareil. Canon allumé + câble USB ?")
         return False
     except FileNotFoundError:
         print("[Canon Linux] gphoto2 absent : sudo apt install gphoto2")
@@ -85,28 +112,66 @@ def _connecter_linux():
 
 
 def _prendre_photo_linux(chemin_fichier):
-    _liberer_usb_canon()
+    """
+    Capture avec gphoto2 en spécifiant explicitement le port du Canon.
+    Si le port n'est pas connu, on le détecte d'abord.
+
+    L'option --port usb:XXX,YYY force gphoto2 à utiliser le Canon et non
+    le téléphone Android même s'ils sont tous les deux branchés.
+    """
+    global _port_canon
+
+    _liberer_gvfs()
+
+    # Détecter le port si pas encore fait
+    if not _port_canon:
+        _port_canon = _detecter_port_canon()
+
+    if not _port_canon:
+        print("[Canon Linux] Port Canon non trouvé. Canon branché et allumé ?")
+        return None
+
     dossier = os.path.dirname(chemin_fichier)
     if dossier:
         os.makedirs(dossier, exist_ok=True)
+
     base_sans_ext = os.path.splitext(chemin_fichier)[0]
-    print(f"[Canon Linux] gphoto2 -> {chemin_fichier}")
+    print(f"[Canon Linux] gphoto2 --port {_port_canon} -> {chemin_fichier}")
+
     try:
         r = subprocess.run(
-            ["gphoto2", "--capture-image-and-download",
-             "--filename", chemin_fichier, "--force-overwrite"],
+            [
+                "gphoto2",
+                "--port", _port_canon,
+                "--capture-image-and-download",
+                "--filename", chemin_fichier,
+                "--force-overwrite"
+            ],
             capture_output=True, text=True, timeout=30
         )
+
         if r.returncode == 0:
             fichier = _trouver_fichier_cree(dossier, base_sans_ext, chemin_fichier)
             if fichier:
                 print(f"[Canon Linux] OK ({os.path.getsize(fichier)//1024} Ko) -> {fichier}")
                 return fichier
-        print(f"[Canon Linux] Échec (code {r.returncode}) : {r.stderr.strip()[:200]}")
-        if "Could not claim" in r.stderr:
-            print("[Canon Linux] Conseil : débrandez le téléphone pendant la capture Canon.")
-            print("[Canon Linux] Ou installez la règle udev (voir haut de ce fichier).")
+
+        print(f"[Canon Linux] Échec (code {r.returncode}) : {r.stderr.strip()[:300]}")
+
+        if "PTP Device Busy" in r.stderr or "0x2019" in r.stderr:
+            print("[Canon Linux] L'objectif est en mode AF (autofocus).")
+            print("[Canon Linux] Passez l'objectif en MF (mise au point manuelle).")
+            print("[Canon Linux] Interrupteur AF/MF sur l'objectif.")
+        elif "Could not claim" in r.stderr:
+            print("[Canon Linux] Port USB bloqué. Débranchez et rebranchez le Canon.")
+        elif "Unsupported operation" in r.stderr or "generic capture" in r.stderr:
+            # gphoto2 a pris le mauvais appareil — réinitialiser le port
+            _port_canon = None
+            print("[Canon Linux] Mauvais appareil ciblé. Port réinitialisé.")
+            print("[Canon Linux] Relancez la détection.")
+
         return None
+
     except subprocess.TimeoutExpired:
         print("[Canon Linux] TIMEOUT 30s.")
         return None
@@ -116,6 +181,10 @@ def _prendre_photo_linux(chemin_fichier):
 
 
 def _trouver_fichier_cree(dossier, base_sans_ext, chemin_demande):
+    """
+    Cherche le fichier créé par gphoto2 quelle que soit son extension.
+    L'appareil peut produire .cr3 (RAW) même si on demande .jpg.
+    """
     if os.path.exists(chemin_demande) and os.path.getsize(chemin_demande) > 0:
         return chemin_demande
     nom_base = os.path.basename(base_sans_ext).lower()
@@ -179,9 +248,12 @@ def _prendre_photo_windows(chemin_fichier):
 
 if __name__ == "__main__":
     print(f"TEST CANON — {'Windows' if WINDOWS else 'Linux'}")
+    print("Détection du port Canon...")
     ok = connecter_canon()
     if not ok:
+        print("Canon non détecté.")
         exit(1)
+    print(f"Canon détecté sur le port : {_port_canon}")
     os.makedirs("images/test", exist_ok=True)
     res = prendre_photo_canon("images/test/canon_test.jpg")
     print(f"Résultat : {res if res else 'Échec'}")

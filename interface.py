@@ -37,7 +37,7 @@ class InterfaceAcquisition:
     def __init__(self):
         self.fenetre = tk.Tk()
         self.fenetre.title("Acquisition d'insectes")
-        self.fenetre.geometry("1200x860")
+        self.fenetre.geometry("1280x940")
         self.fenetre.configure(bg=C_BG)
 
         self.langue             = "FR"
@@ -49,12 +49,11 @@ class InterfaceAcquisition:
         self.photo_tk           = None
         self.chemins_session    = []
 
-        # Attributs prévisualisation — AVANT mainloop()
-        # Sans ça, _toggle_preview_jeulin plante avec AttributeError
+        # Attributs prévisualisation — initialisés AVANT mainloop()
         self._preview_active   = False
-        self._preview_thread   = None
         self._preview_cap      = None
         self._photo_preview_tk = None
+        self._preview_job      = None
 
         self._construire_interface()
         threading.Thread(target=self._verifier_tous, daemon=True).start()
@@ -71,7 +70,7 @@ class InterfaceAcquisition:
         corps.pack(fill="both", expand=True, padx=10, pady=8)
         col_g = tk.Frame(corps, bg=C_BG)
         col_g.pack(side="left", fill="both", expand=True)
-        col_d = tk.Frame(corps, bg=C_BG, width=310)
+        col_d = tk.Frame(corps, bg=C_BG, width=320)
         col_d.pack(side="right", fill="y", padx=(10, 0))
         col_d.pack_propagate(False)
         self._construire_gauche(col_g)
@@ -98,8 +97,9 @@ class InterfaceAcquisition:
     def _construire_gauche(self, parent):
         self._section_metadonnees(parent)
         self._section_connexion(parent)
-        self._section_declenchement(parent)
+        # Prévisualisation AVANT les boutons de déclenchement
         self._section_preview_jeulin(parent)
+        self._section_declenchement(parent)
         self._section_journal(parent)
 
     def _section_metadonnees(self, parent):
@@ -112,8 +112,6 @@ class InterfaceAcquisition:
             text=self.t("params_note"),
             bg=C_FRAME_BG, fg=C_ROUGE, font=("Arial", 9, "italic"))
         self.lbl_params_note.pack(anchor="w", pady=(0, 6))
-
-        # Champs sans grossissement
         champs = [
             ("espece",   "champ_espece",   "Entry",    "", None),
             ("individu", "champ_individu", "Combobox", "", [str(i) for i in range(1, 21)]),
@@ -165,6 +163,38 @@ class InterfaceAcquisition:
             lbl_statut.pack(side="left")
             self.statuts[cle] = lbl_statut
 
+    def _section_preview_jeulin(self, parent):
+        """
+        Aperçu vidéo en direct — placé AVANT les boutons de déclenchement.
+        Grande taille pour bien voir le sujet avant de déclencher.
+
+        Technique pour minimiser le délai :
+        - after(16, ...) = 60 fps théoriques dans le thread principal
+        - CAP_PROP_BUFFERSIZE=1 pour éviter les frames en retard
+        - On vide le buffer au démarrage en lisant 5 frames sans afficher
+        - Image.NEAREST (plus rapide que LANCZOS) pour le redimensionnement
+        """
+        self.frame_preview = tk.LabelFrame(parent,
+            text="Caméra Jeulin — aperçu en direct",
+            font=("Arial", 10, "bold"), fg=C_JEULIN_FG,
+            bg=C_FRAME_BG, padx=2, pady=2)
+        self.frame_preview.pack(fill="x", pady=(0, 8))
+
+        # Dimensions grandes pour bien voir le sujet
+        self.frame_preview_inner = tk.Frame(
+            self.frame_preview,
+            bg="#1A1A1A",
+            width=620, height=290)
+        self.frame_preview_inner.pack(fill="x", padx=2, pady=2)
+        self.frame_preview_inner.pack_propagate(False)
+
+        self.label_preview = tk.Label(
+            self.frame_preview_inner,
+            text="Jeulin non détectée.\nBranchez la caméra et actualisez la détection.",
+            bg="#1A1A1A", fg="#888888",
+            font=("Arial", 10, "italic"))
+        self.label_preview.place(relx=0.5, rely=0.5, anchor="center")
+
     def _section_declenchement(self, parent):
         self.frame_declench = tk.LabelFrame(parent,
             text=self.t("declencher_titre"),
@@ -203,27 +233,6 @@ class InterfaceAcquisition:
             text="", fg=C_ROUGE, bg=C_FRAME_BG, font=("Arial", 9, "italic"))
         self.lbl_erreur_champs.pack(anchor="w", pady=(6, 0))
 
-    def _section_preview_jeulin(self, parent):
-        """
-        Prévisualisation live de la caméra Jeulin, à gauche sous les boutons.
-        Démarre automatiquement quand la Jeulin est détectée.
-        Un thread secondaire lit le flux vidéo (cv2.VideoCapture) toutes les 80ms.
-        La mise à jour du widget se fait via fenetre.after() car Tkinter n'est
-        pas thread-safe (modifier un widget depuis un thread secondaire crashe).
-        """
-        self.frame_preview = tk.LabelFrame(parent,
-            text="Caméra Jeulin e-Mago — aperçu en direct",
-            font=("Arial", 10, "bold"), fg=C_JEULIN_FG,
-            bg=C_FRAME_BG, padx=4, pady=4)
-        self.frame_preview.pack(fill="x", pady=(0, 8))
-
-        self.label_preview = tk.Label(self.frame_preview,
-            text="Jeulin non détectée\nBranchez la caméra et actualisez la détection.",
-            bg="#E4E4E4", fg="#7A5070",
-            font=("Arial", 9, "italic"),
-            width=60, height=10)
-        self.label_preview.pack(fill="x", padx=2, pady=2)
-
     def _section_journal(self, parent):
         self.frame_journal = tk.LabelFrame(parent,
             text=self.t("journal_titre"),
@@ -231,7 +240,7 @@ class InterfaceAcquisition:
             bg=C_FRAME_BG, padx=5, pady=5)
         self.frame_journal.pack(fill="both", expand=True)
         self.zone_log = tk.Text(self.frame_journal,
-            height=7, font=("Courier", 10), state="disabled",
+            height=6, font=("Courier", 10), state="disabled",
             bg=C_LOG_BG, fg=C_LOG_FG, insertbackground="white", relief="flat")
         sc = tk.Scrollbar(self.frame_journal, command=self.zone_log.yview)
         self.zone_log.configure(yscrollcommand=sc.set)
@@ -250,7 +259,7 @@ class InterfaceAcquisition:
             font=("Arial", 11, "bold"), fg=C_GRIS_TEXTE, bg=C_BG)
         self.lbl_photo_titre.pack(pady=(0, 4))
         self.frame_apercu = tk.Frame(parent,
-            bg="#E4E4E4", width=300, height=215, relief="groove", bd=2)
+            bg="#E4E4E4", width=310, height=225, relief="groove", bd=2)
         self.frame_apercu.pack(fill="x")
         self.frame_apercu.pack_propagate(False)
         self.label_apercu = tk.Label(self.frame_apercu,
@@ -265,7 +274,7 @@ class InterfaceAcquisition:
         self.lbl_indication.pack(pady=(2, 0))
         self.label_nom_photo = tk.Label(parent, text="",
             bg=C_BG, fg=C_GRIS_TEXTE,
-            font=("Courier", 8), wraplength=300, justify="left")
+            font=("Courier", 8), wraplength=310, justify="left")
         self.label_nom_photo.pack(pady=4, anchor="w")
         self.btn_supprimer = tk.Button(parent,
             text=self.t("supprimer"),
@@ -281,7 +290,7 @@ class InterfaceAcquisition:
         self.lbl_session_note = tk.Label(parent,
             text=self.t("session_note"),
             bg=C_BG, fg="#666666",
-            font=("Arial", 9), wraplength=290, justify="left")
+            font=("Arial", 9), wraplength=300, justify="left")
         self.lbl_session_note.pack(anchor="w", pady=(2, 6))
         frame_liste = tk.Frame(parent, bg=C_BG)
         frame_liste.pack(fill="both", expand=True)
@@ -303,7 +312,7 @@ class InterfaceAcquisition:
         self.btn_stack.pack(fill="x", pady=(8, 0))
         self.lbl_stack_statut = tk.Label(parent,
             text="", bg=C_BG, fg=C_GRIS_TEXTE,
-            font=("Arial", 9, "italic"), wraplength=290)
+            font=("Arial", 9, "italic"), wraplength=300)
         self.lbl_stack_statut.pack(anchor="w", pady=(3, 0))
 
     # Langue
@@ -392,10 +401,6 @@ class InterfaceAcquisition:
             self.fenetre.after(0, lambda err=e: self.log(f"{self.t('canon_err')} : {err}"))
 
     def _verifier_jeulin(self):
-        """
-        Détecte la Jeulin et démarre automatiquement la prévisualisation
-        si elle est trouvée.
-        """
         try:
             import cv2
             index_trouve = None
@@ -434,8 +439,7 @@ class InterfaceAcquisition:
                     text=f"Connectée (index {idx})", fg=C_VERT))
                 self.fenetre.after(0, lambda idx=index_trouve: self.log(
                     f"{self.t('jeulin_ok')} {idx}."))
-                # Démarrer la prévisualisation automatiquement
-                self.fenetre.after(500, self._demarrer_preview)
+                self.fenetre.after(700, self._demarrer_preview)
             else:
                 self.index_jeulin = None
                 self.fenetre.after(0, lambda: self.statuts["Jeulin"].configure(
@@ -480,72 +484,69 @@ class InterfaceAcquisition:
 
     def _demarrer_preview(self):
         """
-        Lance le thread de prévisualisation.
-        Appelé automatiquement quand la Jeulin est détectée.
-
-        Un thread (fil d'exécution parallèle) lit le flux vidéo en continu
-        sans bloquer l'interface. Toutes les 80ms il capture une image,
-        la convertit BGR→RGB, la redimensionne et met à jour le widget
-        via fenetre.after() (thread-safe pour Tkinter).
+        Ouvre la caméra et démarre la boucle temps réel.
+        On vide le buffer interne en lisant 5 frames sans les afficher
+        pour éliminer les frames en retard accumulées.
         """
         if self.index_jeulin is None or self._preview_active:
             return
 
         import cv2
-        self._preview_cap = cv2.VideoCapture(self.index_jeulin)
-        if not self._preview_cap.isOpened():
-            self.log("Prévisualisation Jeulin : impossible d'ouvrir le flux vidéo.")
+        cap = cv2.VideoCapture(self.index_jeulin)
+        if not cap.isOpened():
+            self.log("Prévisualisation Jeulin : impossible d'ouvrir la caméra.")
             return
 
-        self._preview_cap.set(cv2.CAP_PROP_FRAME_WIDTH,  640)
-        self._preview_cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH,  640)
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+
+        # Vider le buffer interne du driver V4L2 :
+        # les premières frames sont souvent des frames anciennes mises en cache.
+        # On en lit 5 sans afficher pour arriver à une frame fraîche.
+        for _ in range(5):
+            cap.read()
+
+        self._preview_cap    = cap
         self._preview_active = True
+        self._tick_preview()
 
-        self._preview_thread = threading.Thread(
-            target=self._boucle_preview, daemon=True)
-        self._preview_thread.start()
-        self.log("Prévisualisation Jeulin démarrée.")
+    def _tick_preview(self):
+        """
+        Boucle de prévisualisation dans le thread principal via after(16, ...).
+        16ms = 60 fps théoriques.
+        Image.NEAREST est 3x plus rapide que LANCZOS pour le redimensionnement.
+        """
+        if not self._preview_active or self._preview_cap is None:
+            return
 
-    def _boucle_preview(self):
-        """
-        Thread secondaire : lit le flux vidéo en continu.
-        Met à jour le label_preview via fenetre.after() (obligatoire,
-        Tkinter n'est pas thread-safe).
-        """
         import cv2
-        from PIL import Image, ImageTk
 
-        while self._preview_active:
-            if self._preview_cap is None or not self._preview_cap.isOpened():
-                break
-            ok, frame = self._preview_cap.read()
-            if not ok:
-                break
-
+        ok, frame = self._preview_cap.read()
+        if ok:
             frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             img = Image.fromarray(frame_rgb)
-            img.thumbnail((560, 180), Image.LANCZOS)
+            img.thumbnail((616, 286), Image.NEAREST)
             photo = ImageTk.PhotoImage(img)
+            self._photo_preview_tk = photo
+            self.label_preview.configure(image=photo, text="", bg="#1A1A1A")
+            self.label_preview.place(relx=0.5, rely=0.5, anchor="center")
 
-            def maj(p=photo):
-                self._photo_preview_tk = p
-                self.label_preview.configure(image=p, text="")
-
-            self.fenetre.after(0, maj)
-            time.sleep(0.08)
+        if self._preview_active:
+            self._preview_job = self.fenetre.after(16, self._tick_preview)
 
     def _arreter_preview(self):
-        """
-        Arrête la prévisualisation et libère la caméra.
-        La caméra doit être libérée avant la prise de photo réelle
-        car cv2.VideoCapture ne peut pas être ouvert deux fois.
-        """
+        """Arrête la prévisualisation et libère la caméra."""
         self._preview_active = False
+        if self._preview_job is not None:
+            self.fenetre.after_cancel(self._preview_job)
+            self._preview_job = None
         if self._preview_cap is not None:
             self._preview_cap.release()
             self._preview_cap = None
-        self.label_preview.configure(image="", text="Prévisualisation arrêtée")
         self._photo_preview_tk = None
+        self.label_preview.configure(
+            image="", text="Prévisualisation arrêtée.", bg="#1A1A1A", fg="#888888")
 
     # Déclenchement
 
@@ -566,7 +567,6 @@ class InterfaceAcquisition:
     def _declencher_un(self, appareil):
         if not self._valider_champs():
             return
-        # Arrêter la preview Jeulin avant sa capture (ne peut pas ouvrir 2 fois)
         if appareil == "Jeulin" and self._preview_active:
             self._arreter_preview()
             time.sleep(0.3)
@@ -612,7 +612,6 @@ class InterfaceAcquisition:
                 except Exception as e:
                     self.fenetre.after(0, lambda err=e: self.log(f"{self.t('jeulin_err')} : {err}"))
                 finally:
-                    # Redémarrer la preview après la capture
                     self.fenetre.after(500, self._demarrer_preview)
             else:
                 self.fenetre.after(0, lambda: self.log(self.t("jeulin_decon")))
@@ -689,7 +688,7 @@ class InterfaceAcquisition:
         self.fenetre.after(0, lambda: self.btn_stack.configure(state="normal"))
         self.fenetre.after(5000, lambda: self.lbl_stack_statut.configure(text=""))
 
-    # Aperçu
+    # Aperçu photo
 
     def _mettre_a_jour_apercu(self, chemin_photo, ajouter_liste=True):
         self.derniere_photo = chemin_photo
@@ -698,7 +697,7 @@ class InterfaceAcquisition:
         if os.path.exists(chemin_photo):
             try:
                 img = Image.open(chemin_photo)
-                img.thumbnail((300, 215), Image.LANCZOS)
+                img.thumbnail((310, 225), Image.LANCZOS)
                 self.photo_tk = ImageTk.PhotoImage(img)
                 self.label_apercu.configure(
                     image=self.photo_tk, text="", bg="#E4E4E4", cursor="hand2")
@@ -777,8 +776,11 @@ class InterfaceAcquisition:
             messagebox.showerror(self.t("suppr_err"), f"{self.t('suppr_err')} :\n{e}")
 
     def _ouvrir_guide(self):
-        from text import GUIDE_SECTIONS_FR, GUIDE_SECTIONS_EN
         import webbrowser
+        try:
+            from text import GUIDE_SECTIONS_FR, GUIDE_SECTIONS_EN
+        except ImportError:
+            pass
 
         g = tk.Toplevel(self.fenetre)
         g.title(self.t("guide_titre"))
@@ -795,7 +797,6 @@ class InterfaceAcquisition:
 
         frame_texte = tk.Frame(g, bg=C_BG)
         frame_texte.pack(fill="both", expand=True)
-
         texte = tk.Text(frame_texte,
             font=("Arial", 10), bg="white", fg="#1A1A1A",
             wrap="word", padx=20, pady=14, relief="flat",
@@ -805,10 +806,11 @@ class InterfaceAcquisition:
         texte.pack(side="left", fill="both", expand=True)
         sc.pack(side="right", fill="y")
 
+        C_GRIS = "#5A4060"
         texte.tag_configure("titre",   font=("Arial", 16, "bold"), foreground=C_BARRE, justify="center", spacing1=10, spacing3=6)
-        texte.tag_configure("sous",    font=("Arial", 11, "bold"), foreground=C_BARRE, justify="center", spacing1=4, spacing3=10)
+        texte.tag_configure("sous",    font=("Arial", 11, "bold"), foreground=C_BARRE, justify="center", spacing1=4,  spacing3=10)
         texte.tag_configure("h1",      font=("Arial", 12, "bold"), foreground=C_BARRE, spacing1=14, spacing3=4)
-        texte.tag_configure("section", font=("Arial", 10, "bold"), foreground=GRIS if (GRIS := "#5A4060") else "#5A4060", spacing1=8, spacing3=2)
+        texte.tag_configure("section", font=("Arial", 10, "bold"), foreground=C_GRIS,  spacing1=8,  spacing3=2)
         texte.tag_configure("code",    font=("Courier", 9), foreground="#F0D8EC", background="#2D1F3A", spacing1=1, spacing3=1, lmargin1=30, lmargin2=30)
         texte.tag_configure("normal",  font=("Arial", 10), foreground="#1A1A1A", justify="left", spacing3=4)
 
@@ -834,15 +836,12 @@ class InterfaceAcquisition:
                         if cible.startswith("http"):
                             texte.tag_configure(tag, font=("Arial", 10), foreground="#1A5276", underline=True)
                             texte.tag_bind(tag, "<Button-1>", lambda e, u=cible: webbrowser.open(u))
-                            texte.tag_bind(tag, "<Enter>", lambda e: texte.configure(cursor="hand2"))
-                            texte.tag_bind(tag, "<Leave>", lambda e: texte.configure(cursor="arrow"))
-                            texte.insert("end", label + "\n", tag)
                         else:
                             texte.tag_configure(tag, font=("Arial", 10), foreground=C_BARRE, lmargin1=20)
                             texte.tag_bind(tag, "<Button-1>", lambda e, a=cible: texte.see(ancres.get(a, "1.0")))
-                            texte.tag_bind(tag, "<Enter>", lambda e: texte.configure(cursor="hand2"))
-                            texte.tag_bind(tag, "<Leave>", lambda e: texte.configure(cursor="arrow"))
-                            texte.insert("end", "  " + label + "\n", tag)
+                        texte.tag_bind(tag, "<Enter>", lambda e: texte.configure(cursor="hand2"))
+                        texte.tag_bind(tag, "<Leave>", lambda e: texte.configure(cursor="arrow"))
+                        texte.insert("end", "  " + label + "\n", tag)
                 elif ligne == "":
                     texte.insert("end", "\n")
                 else:
