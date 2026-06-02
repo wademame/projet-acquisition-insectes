@@ -1,19 +1,27 @@
 # acquisition/canon.py
 # Contrôle du Canon EOS R7
-# Linux   : gphoto2 CLI (sudo apt install gphoto2)
-# Windows : digiCamControl CLI (digicamcontrol.com)
+# Linux   : gphoto2 CLI
+# Windows : digiCamControl CLI
 #
-# Problème "Could not claim USB device" :
-#   gvfs-gphoto2 reprend le contrôle du Canon quand plusieurs appareils
-#   USB sont branchés (ex: téléphone + Canon simultanément).
-#   Solution permanente : règle udev qui empêche gvfs de prendre le Canon.
-#   Commande à lancer UNE SEULE FOIS sur le PC :
+# Problème "Could not claim USB device" avec téléphone branché :
+# ADB (Android Debug Bridge) lance un daemon qui scanne tous les appareils USB,
+# y compris le Canon. gvfs fait pareil. Les deux bloquent gphoto2.
 #
-#   echo 'ATTRS{idVendor}=="04a9", ATTRS{idProduct}=="32f7", ENV{ID_MEDIA_PLAYER}="1"' \
-#     | sudo tee /etc/udev/rules.d/99-canon-r7.rules
-#   sudo udevadm control --reload-rules && sudo udevadm trigger
+# Solution appliquée dans ce fichier :
+# Avant chaque capture Canon, on tue le daemon ADB et gvfs.
+# Après la capture, on redémarre ADB pour que l'Android reste disponible.
 #
-#   Après ça, le Canon n'est plus jamais bloqué par gvfs.
+# Règle udev permanente à lancer UNE SEULE FOIS sur le PC (Linux Mint / Ubuntu) :
+#
+#   sudo tee /etc/udev/rules.d/99-canon-r7.rules << 'EOF'
+#   ATTRS{idVendor}=="04a9", ATTRS{idProduct}=="32f7", ENV{ID_MEDIA_PLAYER}="1"
+#   ATTRS{idVendor}=="04a9", ATTRS{idProduct}=="32f7", ENV{MTP_NO_PROBE}="1"
+#   EOF
+#   sudo udevadm control --reload-rules
+#   sudo udevadm trigger
+#
+# Après ça, gvfs ignore le Canon. ADB est toujours tué avant chaque capture
+# mais redémarre automatiquement pour l'Android.
 
 import os
 import sys
@@ -34,11 +42,6 @@ def connecter_canon():
 
 
 def prendre_photo_canon(chemin_fichier):
-    """
-    Déclenche et récupère la photo.
-    L'extension du fichier produit dépend du réglage de l'appareil
-    (JPG, CR3 RAW...). On retourne le chemin réel du fichier créé.
-    """
     if LINUX:
         return _prendre_photo_linux(chemin_fichier)
     return _prendre_photo_windows(chemin_fichier)
@@ -48,22 +51,23 @@ def deconnecter_canon():
     pass
 
 
-# ── Linux — gphoto2 ───────────────────────────────────────────────────────────
-
-def _gvfs_libre():
+def _liberer_usb_canon():
     """
-    Tue gvfs-gphoto2 pour libérer le Canon.
-    sleep 2 (avec un espace) laisse le temps au système de libérer le port USB.
-    Si le problème persiste avec plusieurs appareils branchés, installer
-    la règle udev permanente (voir commentaire en haut du fichier).
+    Libère le port USB du Canon en tuant tous les processus qui pourraient
+    le bloquer : gvfs-gphoto2 et le daemon ADB.
+
+    ADB est redémarré après la capture par l'interface si l'Android est branché.
+    sleep 2 laisse le temps au système de libérer l'interface USB.
+    Note : écrire "sleep 2" avec un espace — "sleep2" est une erreur courante.
     """
     subprocess.run(["pkill", "-9", "-f", "gvfs-gphoto2"],  capture_output=True)
     subprocess.run(["pkill", "-9", "-f", "gvfsd-gphoto2"], capture_output=True)
-    time.sleep(2)   # 2 secondes — ne pas écrire "sleep2", mettre un espace
+    subprocess.run(["adb", "kill-server"], capture_output=True)
+    time.sleep(2)
 
 
 def _connecter_linux():
-    _gvfs_libre()
+    _liberer_usb_canon()
     try:
         r = subprocess.run(
             ["gphoto2", "--auto-detect"],
@@ -80,18 +84,11 @@ def _connecter_linux():
 
 
 def _prendre_photo_linux(chemin_fichier):
-    """
-    Capture avec gphoto2 --capture-image-and-download.
-    L'extension du fichier dépend du format réglé sur l'appareil.
-    On cherche le fichier réel après transfert.
-    """
-    _gvfs_libre()
+    _liberer_usb_canon()
     dossier = os.path.dirname(chemin_fichier)
     if dossier:
         os.makedirs(dossier, exist_ok=True)
-
     base_sans_ext = os.path.splitext(chemin_fichier)[0]
-
     print(f"[Canon Linux] gphoto2 -> {chemin_fichier}")
     try:
         r = subprocess.run(
@@ -99,22 +96,16 @@ def _prendre_photo_linux(chemin_fichier):
              "--filename", chemin_fichier, "--force-overwrite"],
             capture_output=True, text=True, timeout=30
         )
-
         if r.returncode == 0:
             fichier = _trouver_fichier_cree(dossier, base_sans_ext, chemin_fichier)
             if fichier:
                 print(f"[Canon Linux] OK ({os.path.getsize(fichier)//1024} Ko) -> {fichier}")
                 return fichier
-
         print(f"[Canon Linux] Échec (code {r.returncode}) : {r.stderr.strip()[:200]}")
         if "Could not claim" in r.stderr:
-            print("[Canon Linux] Conseil : installez la règle udev permanente.")
-            print("[Canon Linux] Commande (une seule fois) :")
-            print('  echo \'ATTRS{idVendor}=="04a9", ATTRS{idProduct}=="32f7", ENV{ID_MEDIA_PLAYER}="1"\' \\')
-            print("    | sudo tee /etc/udev/rules.d/99-canon-r7.rules")
-            print("  sudo udevadm control --reload-rules && sudo udevadm trigger")
+            print("[Canon Linux] Un processus bloque encore le Canon.")
+            print("[Canon Linux] Essayez de débrancher puis rebrancher le Canon.")
         return None
-
     except subprocess.TimeoutExpired:
         print("[Canon Linux] TIMEOUT 30s.")
         return None
@@ -126,7 +117,7 @@ def _prendre_photo_linux(chemin_fichier):
 def _trouver_fichier_cree(dossier, base_sans_ext, chemin_demande):
     """
     Cherche le fichier créé par gphoto2 quelle que soit son extension.
-    L'appareil peut produire .cr3 même si on demande .jpg.
+    L'appareil peut produire .cr3 même si on demande .jpg (format RAW).
     """
     if os.path.exists(chemin_demande) and os.path.getsize(chemin_demande) > 0:
         return chemin_demande
@@ -140,8 +131,6 @@ def _trouver_fichier_cree(dossier, base_sans_ext, chemin_demande):
     return None
 
 
-# ── Windows — digiCamControl ──────────────────────────────────────────────────
-
 def _connecter_windows():
     if not os.path.exists(DIGICAM_CMD):
         print(f"[Canon Windows] digiCamControl introuvable : {DIGICAM_CMD}")
@@ -154,14 +143,11 @@ def _connecter_windows():
 def _prendre_photo_windows(chemin_fichier):
     if not os.path.exists(DIGICAM_CMD):
         return None
-
     dossier = os.path.dirname(chemin_fichier)
     if dossier:
         os.makedirs(dossier, exist_ok=True)
-
     chemin_absolu = os.path.abspath(chemin_fichier)
     base_sans_ext = os.path.splitext(chemin_absolu)[0]
-
     print(f"[Canon Windows] digiCamControl -> {chemin_absolu}")
     try:
         r = subprocess.run(
@@ -169,11 +155,9 @@ def _prendre_photo_windows(chemin_fichier):
             capture_output=True, text=True, timeout=30
         )
         sortie = r.stdout + r.stderr
-
         if os.path.exists(chemin_absolu) and os.path.getsize(chemin_absolu) > 0:
             print(f"[Canon Windows] OK ({os.path.getsize(chemin_absolu)//1024} Ko)")
             return chemin_absolu
-
         if "Transfer done" in sortie:
             for ligne in sortie.splitlines():
                 if "Transfer done" in ligne:
@@ -186,10 +170,8 @@ def _prendre_photo_windows(chemin_fichier):
                             shutil.copy2(source, cible)
                             print(f"[Canon Windows] OK ({os.path.getsize(cible)//1024} Ko) -> {cible}")
                             return cible
-
-        print(f"[Canon Windows] Échec.")
+        print("[Canon Windows] Échec.")
         return None
-
     except subprocess.TimeoutExpired:
         print("[Canon Windows] TIMEOUT.")
         return None
@@ -198,16 +180,12 @@ def _prendre_photo_windows(chemin_fichier):
         return None
 
 
-# ── Test direct ───────────────────────────────────────────────────────────────
-
 if __name__ == "__main__":
-    print("=" * 50)
     print(f"TEST CANON — {'Windows' if WINDOWS else 'Linux'}")
-    print("=" * 50)
     ok = connecter_canon()
     if not ok:
         exit(1)
     os.makedirs("images/test", exist_ok=True)
     res = prendre_photo_canon("images/test/canon_test.jpg")
-    print(f"\nRésultat : {res if res else 'Échec'}")
+    print(f"Résultat : {res if res else 'Échec'}")
     deconnecter_canon()

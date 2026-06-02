@@ -53,6 +53,11 @@ class InterfaceAcquisition:
         threading.Thread(target=self._verifier_tous, daemon=True).start()
         self.fenetre.mainloop()
 
+        self._preview_active    = False   # True quand la preview Jeulin est en cours
+        self._preview_thread    = None    # thread qui lit le flux vidéo
+        self._preview_cap       = None    # objet cv2.VideoCapture
+        self._photo_preview_tk  = None    # image Tkinter pour l'affichage
+
     def t(self, cle):
         return TEXTES[self.langue][cle]
 
@@ -276,6 +281,28 @@ class InterfaceAcquisition:
             font=("Arial", 9, "italic"), wraplength=290)
         self.lbl_stack_statut.pack(anchor="w", pady=(3, 0))
 
+    # Prévisualisation live Jeulin
+        self.frame_preview_jeulin = tk.LabelFrame(parent,
+            text="Prévisualisation Jeulin (live)",
+            font=("Arial", 9), fg=C_GRIS_TEXTE, bg=C_BG, padx=4, pady=4)
+        self.frame_preview_jeulin.pack(fill="x", pady=(6, 0))
+        self.frame_preview_jeulin.pack_propagate(False)
+        self.frame_preview_jeulin.configure(height=160)
+ 
+        self.label_preview = tk.Label(self.frame_preview_jeulin,
+            text="Jeulin non détectée",
+            bg="#E4E4E4", fg="#7A5070",
+            font=("Arial", 9, "italic"))
+        self.label_preview.pack(fill="both", expand=True)
+ 
+        self.btn_toggle_preview = tk.Button(parent,
+            text="▶  Démarrer la prévisualisation",
+            font=("Arial", 9), bg="#DDDADA", fg="black",
+            relief="flat", padx=6,
+            command=self._toggle_preview_jeulin)
+        self.btn_toggle_preview.pack(fill="x", pady=(2, 6))
+
+
     # Langue
 
     def _changer_langue(self):
@@ -473,6 +500,14 @@ class InterfaceAcquisition:
             target=self._capture_un_appareil,
             args=(appareil,), daemon=True
         ).start()
+
+        # Dans _declencher_un, avant de lancer le thread de capture Jeulin :
+        # Arrêter la prévisualisation car cv2.VideoCapture ne peut pas être
+        # ouvert deux fois en même temps (la preview et la capture).
+        if appareil == "Jeulin" and self._preview_active:
+            self._arreter_preview()
+            import time
+            time.sleep(0.3)  # laisser le temps à la caméra de se libérer
 
     def _capture_un_appareil(self, appareil):
         from acquisition.nommage import (
@@ -858,7 +893,101 @@ class InterfaceAcquisition:
             relief="flat", padx=20, pady=6,
             command=g.destroy
             ).pack(pady=(6, 12))
+        
+    def _toggle_preview_jeulin(self):
+        """
+        Démarre ou arrête la prévisualisation live de la Jeulin.
+        Appelé par le bouton « Démarrer la prévisualisation ».
+        """
+        if self._preview_active:
+            self._arreter_preview()
+        else:
+            self._demarrer_preview()    
 
+    def _demarrer_preview(self):
+        """
+        Lance le thread de prévisualisation si la Jeulin est détectée.
+        Le thread lit le flux vidéo en continu et met à jour le widget.
+        """
+        if self.index_jeulin is None:
+            self.log("Jeulin non détectée. Actualisez la détection d'abord.")
+            return
+        
+        import cv2
+ 
+        self._preview_cap = cv2.VideoCapture(self.index_jeulin)
+        if not self._preview_cap.isOpened():
+            self.log("Impossible d'ouvrir le flux vidéo Jeulin.")
+            return    
+        # Résolution d'aperçu : 640x480 pour la fluidité
+        self._preview_cap.set(cv2.CAP_PROP_FRAME_WIDTH,  640)
+        self._preview_cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+    
+        self._preview_active = True
+        self.btn_toggle_preview.configure(text="⏹  Arrêter la prévisualisation")    
+    
+        import threading
+        self._preview_thread = threading.Thread(
+            target=self._boucle_preview, daemon=True)
+        self._preview_thread.start()
+        self.log("Prévisualisation Jeulin démarrée.")
+
+
+    def _boucle_preview(self):
+        """
+        Thread secondaire : lit une image de la Jeulin toutes les 80ms
+        et met à jour le label via fenetre.after().
+    
+        Pourquoi after() et pas configure() directement ?
+        Tkinter n'est pas thread-safe. Modifier un widget depuis un thread
+        secondaire cause des crashs ou des comportements imprévisibles.
+        fenetre.after(0, fonction) planifie l'exécution dans le thread principal.
+        """
+        import cv2
+        from PIL import Image, ImageTk
+    
+        while self._preview_active:
+            if self._preview_cap is None or not self._preview_cap.isOpened():
+                break
+    
+            ok, frame = self._preview_cap.read()
+            if not ok:
+                break
+    
+            # OpenCV produit des images en BGR, Pillow attend du RGB
+            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    
+            # Redimensionner pour tenir dans le widget (280x155 pixels)
+            img = Image.fromarray(frame_rgb)
+            img.thumbnail((280, 155), Image.LANCZOS)
+            photo = ImageTk.PhotoImage(img)
+    
+            # Mise à jour dans le thread principal via after()
+            def mettre_a_jour(p=photo):
+                self._photo_preview_tk = p  # garder une référence Python !
+                self.label_preview.configure(image=p, text="")
+    
+            self.fenetre.after(0, mettre_a_jour)
+    
+            # 80ms entre chaque image = environ 12 fps (suffisant pour un aperçu)
+            import time
+            time.sleep(0.08)
+
+
+    def _arreter_preview(self):
+        """
+        Arrête le thread de prévisualisation et libère la caméra.
+        Libérer la caméra est important : si elle reste ouverte, cv2.VideoCapture
+        ne peut pas la réouvrir pour la prise de photo réelle.
+        """
+        self._preview_active = False
+        if self._preview_cap is not None:
+            self._preview_cap.release()
+            self._preview_cap = None
+        self.label_preview.configure(image="", text="Prévisualisation arrêtée")
+        self._photo_preview_tk = None
+        self.btn_toggle_preview.configure(text="▶  Démarrer la prévisualisation")
+        self.log("Prévisualisation Jeulin arrêtée.")
 
 if __name__ == "__main__":
     app = InterfaceAcquisition()
