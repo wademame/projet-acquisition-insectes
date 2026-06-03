@@ -1,42 +1,6 @@
 # traitement/stacking.py
 # Focus stacking : combine plusieurs photos prises à des mises au point
 # différentes pour produire une seule image entièrement nette.
-#
-# ── Algorithmes utilisés ─────────────────────────────────────────────────────
-#
-# Méthode principale : enfuse (open source, gratuit, disponible sur Linux)
-#   Fait partie du projet Hugin (https://hugin.sourceforge.io).
-#   Utilise une fusion multi-bandes par pondération de l'exposition,
-#   du contraste et de la saturation — même principe que Mertens mais
-#   plus robuste sur les textures fines. Produit des résultats proches
-#   des logiciels professionnels.
-#   Installation : sudo apt install enfuse
-#
-# Fallback (si enfuse non installé) : AlignMTB + Mertens (OpenCV)
-#
-#   AlignMTB (Median Threshold Bitmap) :
-#     Algorithme d'alignement qui compare les niveaux de luminosité de
-#     chaque image et calcule un décalage en x et y pour les superposer.
-#     Corrige les micro-décalages dus à la manipulation manuelle du focus.
-#     Complexité O(n * pixels) — rapide car travaille sur des images
-#     binarisées (seuil médian) plutôt que sur les valeurs brutes.
-#
-#   Mertens (fusion multi-échelle) :
-#     Pour chaque pixel, calcule trois scores : contraste local (variance
-#     du Laplacien dans un voisinage), saturation et exposition.
-#     Combine ces scores avec des pyramides laplaciennes pour une fusion
-#     progressive sans artefacts de couture.
-#     Peut produire de légers halos sur des textures très fines.
-#
-# ── Automatisation du nommage et de la sauvegarde ───────────────────────────
-#
-# Le pipeline complet est :
-#   1. L'utilisateur sélectionne des photos dans l'interface (Ctrl+clic)
-#   2. focus_stacking() est appelé avec la liste des chemins
-#   3. Le nom de sortie est construit automatiquement depuis le nom
-#      de la première photo brute en remplaçant "_photoXX" par "_STACKEE"
-#   4. Le fichier est sauvegardé en .tiff sans compression (sans perte)
-#   5. L'aperçu dans l'interface se met à jour automatiquement
 
 import cv2
 import os
@@ -78,9 +42,8 @@ def focus_stacking(liste_chemins, chemin_sortie):
     return _stacking_mertens(liste_chemins, chemin_sortie)
 
 
-# ==============================================================================
-# MÉTHODE 1 : enfuse (gratuit, open source)
-# ==============================================================================
+
+# MÉTHODE 1 : enfuse (gratuit, open source, car les autres sont payant)
 
 def _stacking_enfuse(liste_chemins, chemin_sortie):
     """
@@ -91,12 +54,11 @@ def _stacking_enfuse(liste_chemins, chemin_sortie):
     et son exposition. C'est conçu pour le HDR mais fonctionne très bien
     pour le focus stacking.
 
-    On utilise align_image_stack (inclus avec enfuse/hugin) pour aligner
-    les images avant la fusion si disponible, sinon on passe directement
+    j'utilise align_image_stack (inclus avec enfuse/hugin) pour aligner
+    les images avant la fusion si disponible (car c'est meileur), sinon on passe directement
     à enfuse.
 
-    Installation : sudo apt install enfuse
-    (inclut align_image_stack sur la plupart des distributions)
+    l'installation de enfuse inclut déjà align_image_stack sur la plupart des distributions sinon il faut le télécharger
     """
     dossier_sortie = os.path.dirname(os.path.abspath(chemin_sortie))
     if dossier_sortie:
@@ -148,9 +110,7 @@ def _stacking_enfuse(liste_chemins, chemin_sortie):
         return None
 
 
-# ==============================================================================
-# MÉTHODE 2 : AlignMTB + Mertens (OpenCV) — fallback universel
-# ==============================================================================
+# MÉTHODE 2 : AlignMTB + Mertens (OpenCV) : fallback universel
 
 def _charger_images(liste_chemins):
     images = []
@@ -166,7 +126,7 @@ def _charger_images(liste_chemins):
 
 def _aligner_images(images):
     """
-    AlignMTB : aligne par seuillage médian de luminosité.
+    AlignMTB : il aligne par seuillage médian de luminosité.
     Corrige les décalages x/y entre images.
     """
     if len(images) < 2:
@@ -179,7 +139,7 @@ def _aligner_images(images):
 
 def _fusionner_mertens(images):
     """
-    Mertens : fusion par pondération multi-échelle.
+    Mertens : fusion par pondération multi-échelle. c'est à dire 
     Score par pixel = contraste local × saturation × exposition.
     Résultat en float32 (0-1) converti en uint8 (0-255).
     """
@@ -210,9 +170,7 @@ def _stacking_mertens(liste_chemins, chemin_sortie):
     return None
 
 
-# ==============================================================================
-# TEST DIRECT
-# ==============================================================================
+# TEST DIRECT sans l'interface pour vérification
 
 if __name__ == "__main__":
     import sys

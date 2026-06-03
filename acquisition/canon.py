@@ -1,14 +1,6 @@
 # acquisition/canon.py
 # Contrôle du Canon EOS R7 via gphoto2 (Linux) ou digiCamControl (Windows).
-#
-# Problème résolu : quand plusieurs appareils sont branchés (téléphone + Canon),
-# gphoto2 sans --port prend le premier appareil détecté — souvent le téléphone.
-# Solution : détecter le port USB du Canon dans la liste gphoto2 et le passer
-# explicitement avec --port usb:XXX,YYY à chaque commande.
-#
-# Autofocus : si l'objectif est en mode AF (autofocus), gphoto2 retourne
-# l'erreur 0x2019 "PTP Device Busy". Il faut passer l'objectif en MF (Manuel).
-# Ce réglage se fait sur l'objectif lui-même (interrupteur AF/MF).
+
 
 import os
 import sys
@@ -56,11 +48,9 @@ def _liberer_gvfs():
 def _detecter_port_canon():
     """
     Cherche le port USB du Canon dans la liste gphoto2 --auto-detect.
-    Retourne le port sous forme "usb:004,030" ou None si non trouvé.
-
-    Pourquoi c'est nécessaire :
-    Quand le téléphone ET le Canon sont branchés, gphoto2 liste deux appareils.
-    Sans --port, gphoto2 prend le premier — souvent le téléphone.
+    Retourne le port sous forme "usb:004,030" ou None si non trouvé. Car
+    Quand le téléphone et le Canon sont branchés, gphoto2 liste deux appareils.
+    Sans --port, gphoto2 prend le premier, souvent le téléphone.
     On cherche explicitement la ligne qui contient "Canon" pour avoir son port.
 
     Exemple de sortie de gphoto2 --auto-detect :
@@ -75,7 +65,7 @@ def _detecter_port_canon():
         )
         for ligne in r.stdout.splitlines():
             if "Canon" in ligne or "canon" in ligne.lower():
-                # La ligne est du type "Canon EOS R7     usb:004,034"
+                # La ligne est du type par exemple "Canon EOS R7     usb:004,034"
                 # Le port est le dernier mot de la ligne
                 parties = ligne.split()
                 for p in reversed(parties):
@@ -165,7 +155,7 @@ def _prendre_photo_linux(chemin_fichier):
         elif "Could not claim" in r.stderr:
             print("[Canon Linux] Port USB bloqué. Débranchez et rebranchez le Canon.")
         elif "Unsupported operation" in r.stderr or "generic capture" in r.stderr:
-            # gphoto2 a pris le mauvais appareil — réinitialiser le port
+            # gphoto2 a pris le mauvais appareil il va du coup réinitialiser le port
             _port_canon = None
             print("[Canon Linux] Mauvais appareil ciblé. Port réinitialisé.")
             print("[Canon Linux] Relancez la détection.")
@@ -247,7 +237,7 @@ def _prendre_photo_windows(chemin_fichier):
 
 
 if __name__ == "__main__":
-    print(f"TEST CANON — {'Windows' if WINDOWS else 'Linux'}")
+    print(f"TEST CANON : {'Windows' if WINDOWS else 'Linux'}")
     print("Détection du port Canon...")
     ok = connecter_canon()
     if not ok:

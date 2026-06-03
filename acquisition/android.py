@@ -1,7 +1,5 @@
 # acquisition/android.py
 # Controle Android via ADB
-# INSTALLATION : sudo apt install adb
-# Sur le telephone : Options developpeur > Debogage USB > Activer
 
 import subprocess
 import os

@@ -1,14 +1,8 @@
 # acquisition/nommage.py
 # Nommage structuré des fichiers et création automatique des dossiers.
-#
+
 # Convention : espece_indXX_camAppareil_angleAngle_photoXX.ext
 # Exemple    : scolyte1_ind01_camCanon_angleDorsal_photo03.jpg
-#
-# Le grossissement a été retiré car les images sont toutes prises
-# à la même distance avec la loupe binoculaire — l'information est
-# redondante avec le contexte expérimental.
-#
-# L'extension n'est pas forcée — elle vient du fichier réel produit par l'appareil.
 
 import os
 
