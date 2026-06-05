@@ -11,7 +11,6 @@ Trois appareils sont pilotés depuis une seule interface : un Canon EOS R7, une 
 ## Interface
 
 ![Interface principale](docs/screenshots/interface.png)
-*Insérez ici une capture de l'interface avec les trois boutons de déclenchement*
 
 ---
 
@@ -127,7 +126,7 @@ Tout le reste (`tkinter`, `subprocess`, `threading`, `os`, `sys`, `time`, `datet
 
 ## Documentation
 
-- [Guide d'utilisation](docs/GUIDE_UTILISATION.pdf)
-- [Guide d'installation](docs/GUIDE_INSTALLATION.pdf)
-- [Documentation technique](docs/DOCUMENTATION_TECHNIQUE.pdf)
-- [Webographie](docs/WEBOGRAPHIE.pdf)
+- [Guide d'utilisation](docs/Guide_dutilisation_Stage2_BUT3_WADE_Mame_Diarra.pdf)
+- [Guide d'installation](docs/Guide_dinstallation_Stage2_BUT3_WADE_Mame_Diarra.pdf)
+- [Documentation technique](docs/Documentation_technique_stage2_BUT3_WADE_Mame_Diarra.pdf)
+- [Webographie](docs/webographie_stage2_BUT3_WADE_Mame_Diarra.pdf)
