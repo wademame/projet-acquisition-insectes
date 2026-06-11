@@ -10,11 +10,7 @@ Trois appareils sont pilotés depuis une seule interface : un Canon EOS R7, une 
 
 ## Interface
 
-![Interface principale](docs/screenshots/interface_principale.png)
-*Insérez ici une capture de l'interface avec les trois boutons de déclenchement*
-
-![Focus stacking](docs/screenshots/focus_stacking.png)
-*Insérez ici une capture du résultat d'un focus stacking*
+![Interface principale](docs/screenshots/interface.png)
 
 ---
 
@@ -33,7 +29,7 @@ Trois appareils sont pilotés depuis une seule interface : un Canon EOS R7, une 
 ### Linux (Ubuntu 20.04 / Linux Mint)
 
 ```bash
-git clone https://github.com/TON_COMPTE/projet-acquisition-insectes.git
+git clone https://github.com/wademame/projet-acquisition-insectes.git
 cd projet-acquisition-insectes
 sudo apt install python3 python3-tk python3-venv git gphoto2 enfuse
 python3 -m venv venv
@@ -51,7 +47,7 @@ chmod +x ~/Bureau/lancer_acquisition.desktop
 
 ```
 1. Installer Python 3.11 depuis python.org (cocher "Add Python to PATH")
-2. Copier le projet ou : git clone https://github.com/TON_COMPTE/projet-acquisition-insectes.git
+2. Copier le projet ou : git clone https://github.com/wademame/projet-acquisition-insectes.git
 3. Double-cliquer sur lancer.bat
 ```
 
@@ -130,7 +126,7 @@ Tout le reste (`tkinter`, `subprocess`, `threading`, `os`, `sys`, `time`, `datet
 
 ## Documentation
 
-- [Guide d'utilisation](docs/GUIDE_UTILISATION.pdf)
-- [Guide d'installation](docs/GUIDE_INSTALLATION.pdf)
-- [Documentation technique](docs/DOCUMENTATION_TECHNIQUE.pdf)
-- [Webographie](docs/WEBOGRAPHIE.pdf)
+- [Guide d'utilisation](docs/Guide_dutilisation_Stage2_BUT3_WADE_Mame_Diarra.pdf)
+- [Guide d'installation](docs/Guide_dinstallation_Stage2_BUT3_WADE_Mame_Diarra.pdf)
+- [Documentation technique](docs/Documentation_technique_stage2_BUT3_WADE_Mame_Diarra.pdf)
+- [Webographie](docs/webographie_stage2_BUT3_WADE_Mame_Diarra.pdf)
