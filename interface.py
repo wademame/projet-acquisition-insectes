@@ -205,10 +205,12 @@ class InterfaceAcquisition:
         # gamma      :  72 à 500, défaut 200 (recommandé pour insectes)
         self._val_brightness = tk.IntVar(value=0)
         self._val_gamma      = tk.IntVar(value=200)
+        self._val_exposure   = tk.IntVar(value=157)
 
         curseurs = [
             ("Luminosité", self._val_brightness, -64, 64,   0,   "brightness"),
             ("Gamma",      self._val_gamma,        72, 500, 200,  "gamma"),
+            ("Exposition",  self._val_exposure,      1, 5000,  157,  "exposure_absolute"),
         ]
 
         for i, (label, var, vmin, vmax, neutre, ctrl_name) in enumerate(curseurs):
@@ -615,6 +617,13 @@ class InterfaceAcquisition:
         cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
         for _ in range(5):
             cap.read()
+
+        # Fixer l'exposition en mode manuel AVANT de démarrer le flux
+        # exposure_auto=1 = manuel, exposure_auto=3 = auto (défaut driver)
+        # Sans ça la caméra recalcule à chaque nouveau flux et surexpose à la capture
+        self._appliquer_v4l2("exposure_auto", 1)
+        self._appliquer_v4l2("exposure_absolute", self._val_exposure.get())
+
 
         self._preview_cap    = cap
         self._preview_active = True
