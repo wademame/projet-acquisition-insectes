@@ -620,8 +620,8 @@ class InterfaceAcquisition:
         # Fixer l'exposition en mode manuel AVANT de démarrer le flux
         # exposure_auto=1 = manuel, exposure_auto=3 = auto (défaut driver)
         # Sans ça la caméra recalcule à chaque nouveau flux et surexpose à la capture
-        self._appliquer_v4l2("exposure_auto", 1)
-        self._appliquer_v4l2("exposure_time_absolute", self._val_exposure.get())
+        # self._appliquer_v4l2("exposure_auto", 1)
+        # self._appliquer_v4l2("exposure_time_absolute", self._val_exposure.get())
 
 
         self._preview_cap    = cap
